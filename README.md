@@ -1,14 +1,19 @@
 # Force-Field
 
-Spin State Labs' Claude Code plugin marketplace. AI hygiene and analytical skills for production-grade work.
+Spin State Labs' Claude Code plugin marketplace. The home of the **Force Field Framework** — Spin State's approach to building AI that's defensible in production.
 
-## What's inside
+## What's the Force Field Framework?
 
-| Plugin | Purpose | Install |
-|---|---|---|
-| **`force`** | The FORCE protocol — toggleable AI hygiene constraints | `/plugin install force@force-field` |
+Two layers, two plugins, one marketplace:
 
-More plugins to follow.
+| Layer | What it does | Plugin | Status |
+|---|---|---|---|
+| **FORCE** | Runtime prompt protocol. Constrains what an AI *says*. | `force` | ✅ v1.0 shipped |
+| **FIELD** | Design-time persona methodology. Constrains who the AI *is*. | `field` | 🔜 in design |
+
+FORCE neutralizes sycophancy and hallucination on individual responses. FIELD defines the persona — boundaries, identity, escalation rules — that the agent maintains across thousands of interactions. They compose.
+
+See [ROADMAP.md](ROADMAP.md) for the full picture.
 
 ## Install the marketplace
 
@@ -18,7 +23,7 @@ In any Claude Code session:
 /plugin marketplace add SpinStateLabs/Force-Field
 ```
 
-Then install individual plugins:
+Then install plugins:
 
 ```
 /plugin install force@force-field
@@ -37,20 +42,16 @@ A five-letter prompt protocol designed at Spin State Labs to neutralize the two 
 - **C** — Chain-of-Thought
 - **E** — Express Uncertainty
 
-The full kit (one-pager PDF, system prompt, n8n workflow, this plugin) lives at [spinstatelabs.ca/force](https://spinstatelabs.ca/force).
-
-## Why Force-Field?
-
-The marketplace name reflects the broader Spin State Labs framework — *Force Field* — for AI persona development and boundary-setting in agentic systems. The FORCE prompt protocol is the first surface of that work; more skills (FP&A analyst, audit, agentic financial planning) will follow as plugins under this same marketplace.
+The full kit (one-pager PDF, Claude.ai system prompt, n8n workflow, this plugin) lives at [spinstatelabs.ca/force](https://spinstatelabs.ca/force).
 
 ## Repo structure
 
 ```
 Force-Field/
 ├── .claude-plugin/
-│   └── marketplace.json           # Marketplace catalog
+│   └── marketplace.json              # Marketplace catalog
 ├── plugins/
-│   └── force/                     # The FORCE plugin
+│   └── force/                        # FORCE plugin (v1.0 shipped)
 │       ├── .claude-plugin/
 │       │   └── plugin.json
 │       ├── skills/
@@ -63,12 +64,15 @@ Force-Field/
 │       └── README.md
 ├── .github/
 │   └── workflows/
-│       └── validate.yml           # JSON schema validation on push
-├── LICENSE
+│       └── validate.yml              # JSON schema validation on push
+├── LICENSE                           # MIT
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
+├── ROADMAP.md                        # FORCE shipped, FIELD next
 └── README.md
 ```
+
+FIELD will live at `plugins/field/` when it ships.
 
 ## Development
 
@@ -83,16 +87,18 @@ The local path version lets you iterate without pushing every change.
 
 ## Versioning
 
-Plugin versions follow [SemVer](https://semver.org/). Update `version` in:
-1. `plugins/<name>/.claude-plugin/plugin.json`
-2. `.claude-plugin/marketplace.json` (matching plugin entry)
-3. `CHANGELOG.md`
+Plugin versions follow [SemVer](https://semver.org/). To release a new version:
+
+1. Update `version` in `plugins/<name>/.claude-plugin/plugin.json`
+2. Update the matching plugin entry in `.claude-plugin/marketplace.json`
+3. Add a section to `CHANGELOG.md`
+4. Tag the commit: `git tag v1.x.x && git push --tags`
 
 Users get the new version when they run `/plugin marketplace update force-field`.
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). Pull requests welcome for bug fixes and protocol refinements. New plugins are accepted only if they align with Spin State Labs' positioning (AI hygiene, FP&A, agentic systems).
+See [CONTRIBUTING.md](CONTRIBUTING.md). The marketplace is curated, not community-open — pull requests welcome for bug fixes and protocol refinements; new plugins by discussion only.
 
 ## License
 
@@ -100,4 +106,4 @@ MIT — see [LICENSE](LICENSE).
 
 ## About Spin State Labs
 
-[Spin State Labs](https://spinstatelabs.ca) — a Waterloo-based AI and quantum company. We implement NetSuite Planning & Budgeting, Oracle EPBCS, and build AI-first Planning, Budgeting & Forecasting software. FORCE is the internal prompt standard we apply to every client deliverable. We're sharing it because the EPM industry needs higher AI hygiene, and frameworks travel faster than they spread by accident.
+[Spin State Labs](https://spinstatelabs.ca) — a Waterloo-based AI and quantum company. We implement NetSuite Planning & Budgeting, Oracle EPBCS, and build AI-first Planning, Budgeting & Forecasting software. The Force Field Framework is the internal standard we apply to every client deliverable. We share it because the EPM industry needs higher AI hygiene, and frameworks travel faster than they spread by accident.

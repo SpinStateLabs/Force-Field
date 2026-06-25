@@ -8,7 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## [Unreleased]
 
-Nothing yet.
+### Planned
+
+- **`field` plugin** — FIELD persona development framework. Design-time methodology for building agent personas that stay aligned, auditable, and production-ready. Target: Q3 2026. See [ROADMAP.md](ROADMAP.md).
+- FORCE v1.1 refinements based on real-world usage feedback.
 
 ---
 
