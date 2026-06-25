@@ -1,0 +1,36 @@
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+*.iml
+
+# Node (for CI validators)
+node_modules/
+package-lock.json
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local test installs
+.claude-test/
+.claude-cache/
+
+# State files (these belong to the user, not the repo)
+.claude/state/
+state.json
+!plugins/*/skills/*/protocol-defaults.json
+
+# Build artifacts
+*.zip
+*.tar.gz
+dist/
+build/
+
+# Environment
+.env
+.env.local
+.env.*.local

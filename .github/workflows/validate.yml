@@ -1,0 +1,91 @@
+name: Validate plugin manifests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  validate:
+    name: JSON schema validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install ajv-cli
+        run: npm install -g ajv-cli ajv-formats
+
+      - name: Validate marketplace.json structure
+        run: |
+          echo "Checking .claude-plugin/marketplace.json exists..."
+          test -f .claude-plugin/marketplace.json
+          echo "Validating JSON syntax..."
+          node -e "JSON.parse(require('fs').readFileSync('.claude-plugin/marketplace.json', 'utf8'))"
+          echo "Checking required fields..."
+          node -e "
+            const m = JSON.parse(require('fs').readFileSync('.claude-plugin/marketplace.json', 'utf8'));
+            if (!m.name) throw new Error('marketplace.json missing required field: name');
+            if (!m.owner) throw new Error('marketplace.json missing required field: owner');
+            if (!Array.isArray(m.plugins) || m.plugins.length === 0) throw new Error('marketplace.json must have a non-empty plugins array');
+            for (const p of m.plugins) {
+              if (!p.name) throw new Error('plugin entry missing name');
+              if (!p.source) throw new Error('plugin entry missing source: ' + p.name);
+            }
+            console.log('marketplace.json OK');
+          "
+
+      - name: Validate each plugin manifest
+        run: |
+          for manifest in plugins/*/.claude-plugin/plugin.json; do
+            echo ""
+            echo "Validating $manifest..."
+            node -e "JSON.parse(require('fs').readFileSync('$manifest', 'utf8'))"
+            node -e "
+              const p = JSON.parse(require('fs').readFileSync('$manifest', 'utf8'));
+              if (!p.name) throw new Error('plugin.json missing name: $manifest');
+              if (!p.version) throw new Error('plugin.json missing version: $manifest');
+              console.log('  name:', p.name);
+              console.log('  version:', p.version);
+              console.log('  OK');
+            "
+          done
+
+      - name: Verify plugin sources exist
+        run: |
+          node -e "
+            const m = JSON.parse(require('fs').readFileSync('.claude-plugin/marketplace.json', 'utf8'));
+            const fs = require('fs');
+            for (const p of m.plugins) {
+              if (typeof p.source === 'string') {
+                const path = p.source.replace(/^\.\//, '');
+                if (!fs.existsSync(path)) throw new Error('Plugin source not found: ' + path);
+                console.log('source ok:', p.source);
+              }
+            }
+          "
+
+      - name: Check skill files exist
+        run: |
+          for skill_dir in plugins/*/skills/*/; do
+            skill_md="${skill_dir}SKILL.md"
+            echo "Checking $skill_md..."
+            test -f "$skill_md" || (echo "Missing SKILL.md in $skill_dir" && exit 1)
+            # SKILL.md must start with YAML frontmatter
+            head -n 1 "$skill_md" | grep -q "^---$" || (echo "$skill_md missing YAML frontmatter" && exit 1)
+            echo "  OK"
+          done
+
+      - name: Check command files have description frontmatter
+        run: |
+          for cmd_file in plugins/*/commands/*.md; do
+            echo "Checking $cmd_file..."
+            head -n 5 "$cmd_file" | grep -q "^description:" || (echo "$cmd_file missing 'description' in frontmatter" && exit 1)
+            echo "  OK"
+          done

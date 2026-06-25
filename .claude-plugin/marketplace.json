@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
+  "name": "force-field",
+  "version": "1.0.0",
+  "description": "Spin State Labs · Claude Code plugin marketplace. AI hygiene, financial planning, and analytical skills for production-grade work.",
+  "owner": {
+    "name": "Spin State Labs",
+    "email": "don@spinstatelabs.ca",
+    "url": "https://spinstatelabs.ca"
+  },
+  "plugins": [
+    {
+      "name": "force",
+      "source": "./plugins/force",
+      "description": "FORCE protocol — toggle Forbid-flattery / Oppose-premise / Reference-sources / Chain-of-thought / Express-uncertainty constraints on or off via the /force slash command.",
+      "version": "1.0.0",
+      "category": "ai-hygiene",
+      "tags": ["force", "anti-sycophancy", "anti-hallucination", "prompt-engineering", "fp-and-a", "audit"],
+      "author": {
+        "name": "Don Hagell",
+        "email": "don@spinstatelabs.ca",
+        "url": "https://spinstatelabs.ca/force"
+      }
+    }
+  ]
+}
