@@ -1,6 +1,6 @@
 # Force Field Framework — Roadmap
 
-The **Force Field Framework** is Spin State Labs' approach to building AI that's defensible in production: aligned, auditable, and resistant to the two failure modes that have ended careers — sycophancy and hallucination.
+The **Force Field Framework** is Spin State Labs' approach to building agentic AI that's defensible in production: aligned, auditable, sovereign, and resistant to the two failure modes that have ended careers — sycophancy and hallucination.
 
 Two complementary layers, two plugins, one marketplace.
 
@@ -10,13 +10,15 @@ Two complementary layers, two plugins, one marketplace.
 │                                                                   │
 │   ┌──────────────────────────┐    ┌──────────────────────────┐  │
 │   │   FORCE                  │    │   FIELD                  │  │
-│   │   Prompt protocol layer  │    │   Persona development     │  │
-│   │                          │    │   layer                  │  │
-│   │   Runtime constraints    │    │   Design-time methodology│  │
-│   │   on individual          │    │   for agent personas,    │  │
-│   │   responses.             │    │   boundaries, and        │  │
-│   │                          │    │   alignment.             │  │
-│   │   Status: SHIPPED v1.0   │    │   Status: TODO           │  │
+│   │   Runtime prompt         │    │   Governance layer for   │  │
+│   │   protocol.              │    │   agentic AI systems.    │  │
+│   │                          │    │                          │  │
+│   │   Constrains what        │    │   Constrains how agents  │  │
+│   │   an AI says on any      │    │   are harnessed, who     │  │
+│   │   individual response.   │    │   owns them, and how     │  │
+│   │                          │    │   they federate.         │  │
+│   │                          │    │                          │  │
+│   │   Status: SHIPPED v1.0   │    │   Status: SCOPED — build │  │
 │   └──────────────────────────┘    └──────────────────────────┘  │
 │                                                                   │
 └──────────────────────────────────────────────────────────────────┘
@@ -26,7 +28,7 @@ Two complementary layers, two plugins, one marketplace.
 
 ## ✅ FORCE — Shipped (v1.0.0, June 2026)
 
-**Five-letter prompt protocol.** Toggleable runtime constraints applied to individual model responses.
+**Five-letter runtime prompt protocol.** Toggleable constraints applied to individual model responses.
 
 - **F** — Forbid Flattery & Force Corrections
 - **O** — Oppose the Premise
@@ -43,10 +45,10 @@ Two complementary layers, two plugins, one marketplace.
 
 ### What v1.0 includes
 
-- `force` plugin with the SKILL.md, `/force` slash command, and stable user-level state file
+- `force` plugin with SKILL.md, `/force` slash command, stable user-level state file
 - Four presets: `analysis`, `brainstorm`, `draft`, `audit`
 - Project-level state override for client-deliverable contexts
-- Full kit at [spinstatelabs.ca/force](https://spinstatelabs.ca/force) — one-pager PDFs, Claude.ai-compatible system prompt, n8n workflow
+- Full kit at [spinstatelabs.ca/force](https://spinstatelabs.ca/force) — one-pager PDFs, Claude.ai system prompt, n8n workflow
 
 ### Next iterations
 
@@ -55,62 +57,93 @@ Two complementary layers, two plugins, one marketplace.
 
 ---
 
-## 🔜 FIELD — In design (target: Q3 2026)
+## 🔜 FIELD — Governance layer for agentic AI (target: Q3 2026)
 
-**AI persona development methodology.** Design-time framework for building agents that stay aligned, auditable, and production-ready over thousands of interactions — not just one response.
+**Not a persona designer. Not a prompt protocol. A governance framework for agentic AI systems.**
 
-FORCE constrains *what an AI says*. FIELD constrains *who the AI is*.
+Three pillars:
 
-### Design questions to resolve
+### 1. Agentic AI Harnessing
+Runtime and structural constraints on autonomous agents. Kill switches, action boundaries, escalation triggers, human-in-the-loop enforcement points. The "brakes and rails" of agentic operation.
 
-1. **The five letters.** FIELD needs to decompose into five distinct dimensions, the way FORCE does. Candidates (placeholders, not commitments):
-   - F — Functional scope (what the persona is allowed to do)
-   - I — Identity & values (who the persona is, what it cares about)
-   - E — Escalation protocols (when to defer to humans)
-   - L — Limits & boundaries (what the persona refuses)
-   - D — Decision rights (what the persona can act on autonomously)
+### 2. AI Sovereignty
+Enterprise-level control over AI systems: who owns the agent, what data it can access, what authority it holds, in what jurisdiction it operates. Attribution, authorization, and boundaries of decision rights.
 
-   These are sketches. Final acronym lands when the framework is designed.
+### 3. AI Federation
+Rules for multi-agent systems where agents from different organizations, ownership structures, or trust domains must interoperate. Trust protocols, contract semantics, and the equivalent of border controls between agent populations.
 
-2. **Implementation pattern.** Unlike FORCE (runtime toggle), FIELD is a design-time methodology. The Claude Code plugin shape may differ:
-   - A subagent generator? Walks a user through defining a new persona.
-   - A template library? A set of FIELD-compliant persona templates.
-   - A validator? Checks an existing persona against FIELD principles.
-   - All three?
+### First-draft letter mapping (subject to founder review)
 
-3. **Composition with FORCE.** Does a FIELD-defined persona auto-apply FORCE? Or is FORCE a runtime overlay that any persona can opt into?
+| Letter | Word | Pillar served |
+|---|---|---|
+| **F** | Federation | Federation |
+| **I** | Identity | Sovereignty |
+| **E** | Enforcement | Harnessing |
+| **L** | Ledger | Crosscutting (audit / accountability) |
+| **D** | Delegation | Sovereignty |
 
-4. **Audit surface.** How does a third party verify a persona is FIELD-compliant? Self-attestation? Generated audit log? Cryptographic attestation of persona spec?
+Not committed. Final acronym lands when the framework is designed.
+
+### Why this framing (vs. persona development)
+
+The original placeholder positioned FIELD as "AI persona development." That framing was too narrow. Persona is one output of governance — but governance covers ownership, accountability, and multi-agent interoperation that persona alone doesn't address. Governance is also the register enterprise buyers understand: CFOs and Controllers already think about audit, control, delegation. FIELD in governance terms sells itself.
+
+### Positioning vs. existing frameworks
+
+FIELD is **not**:
+- A replacement for NIST AI RMF, ISO/IEC 42001, or the EU AI Act
+- A political statement about national AI sovereignty
+- An academic ethics framework
+
+FIELD **is**:
+- Practitioner-implementable governance specifically for agentic systems
+- Complementary to broad governance frameworks (a company using ISO 42001 can also adopt FIELD)
+- Focused on the specific problem of AI agents acting autonomously on behalf of principals
+
+### Design questions to resolve (before Sprint 2 starts)
+
+1. **Final letter mapping** and word choices for FIELD acronym.
+2. **Implementation pattern.** FIELD is a governance framework — the artifact set may include:
+   - Methodology document / one-pager (definitely)
+   - Assessment tooling (help organizations self-assess FIELD compliance)
+   - Reference architectures for agent harnessing / delegation
+   - Claude Code plugin for template governance manifests? Sub-agent generators?
+   - Certification path (Spin State attests FIELD compliance)
+3. **Composition with FORCE.** Working assumption: FORCE runs *within* FIELD-governed agents. Every FIELD-compliant agent applies FORCE at runtime.
+4. **Audit surface.** How does a third party verify FIELD compliance? Options:
+   - Self-attestation with generated audit log
+   - Cryptographic attestation of governance spec
+   - Third-party assessment (Spin State as auditor)
+5. **Business model.** Open framework? Certified assessment service? Both?
 
 ### When FIELD ships
 
-- A second plugin in this marketplace: `/plugin install field@force-field`
-- A second branded artifact set: PDF, landing page section at `spinstatelabs.ca/force-field`
-- Integration patterns documented for FORCE + FIELD composition
+- A second plugin in this marketplace: `/plugin install field@force-field` (if the tooling shape includes a plugin — TBD in design)
+- Governance framework document at `spinstatelabs.ca/field` (or merged into `/force`)
+- Reference implementations and assessment templates
+- FIELD + FORCE composition patterns documented
 
 ### Why this isn't built yet
 
-FORCE earns trust by proving the protocol works in production. FIELD inherits that credibility. Shipping FIELD before FORCE has real-world validation would dilute both. **MEDIUM confidence** that the right ordering is FORCE first, then FIELD — based on standard product sequencing logic, not validated by user research.
+FORCE earns trust by proving the runtime protocol works in production. FIELD inherits that credibility. Shipping FIELD before FORCE has real-world validation would dilute both. **MEDIUM confidence** the right ordering is FORCE first, then FIELD — based on standard product sequencing logic, not user research.
 
 ---
 
 ## Future plugins under consideration
 
-Not committed, just on the radar:
+Not committed. On the radar for after FORCE + FIELD are stable:
 
-- **`nspb-analyst`** — NetSuite Planning & Budgeting analyst skill with built-in FORCE
+- **`nspb-analyst`** — NetSuite Planning & Budgeting analyst skill with FORCE + FIELD compliance
 - **`epm-audit`** — Audit-focused skill for EPM deliverables (Oracle EPBCS, NSPB)
 - **`variance-narrator`** — Variance analysis with confidence-tagged commentary
-
-These are downstream of FORCE + FIELD. Don't ship until the foundation is validated.
 
 ---
 
 ## Versioning policy
 
 - Plugins follow [SemVer](https://semver.org/).
-- Marketplace catalog (`marketplace.json`) version reflects the catalog itself, not the plugins inside it.
-- Breaking changes to plugin behavior (e.g. changing state file location or schema) require a major version bump and a migration note in `CHANGELOG.md`.
+- Marketplace catalog version reflects the catalog itself, not the plugins inside it.
+- Breaking changes require a major version bump and a migration note in `CHANGELOG.md`.
 
 ---
 
@@ -118,8 +151,8 @@ These are downstream of FORCE + FIELD. Don't ship until the foundation is valida
 
 1. **Use FORCE in production.** Real practitioner feedback shapes v1.1+ and informs FIELD design.
 2. **Open issues** on the [GitHub repo](https://github.com/SpinStateLabs/Force-Field) for bugs, gaps, or feature requests.
-3. **Contact** Don directly: `don@spinstatelabs.ca` for substantive design input on FIELD.
+3. **Contact** Don: `don@spinstatelabs.ca` for substantive input on FIELD governance framework design.
 
 ---
 
-*Spin State Labs · Force Field Framework Roadmap v1.0 · Updated June 2026*
+*Spin State Labs · Force Field Framework Roadmap v1.1 · Updated June 2026*
