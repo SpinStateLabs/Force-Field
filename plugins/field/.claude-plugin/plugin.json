@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin.json",
+  "name": "field",
+  "version": "1.0.0",
+  "description": "FIELD governance framework from Spin State Labs. Generate, validate, and audit governance manifests for agentic AI systems. Addresses agentic harnessing, AI sovereignty, and AI federation. Sibling of the FORCE runtime protocol.",
+  "author": {
+    "name": "Don Hagell",
+    "email": "don@spinstatelabs.ca",
+    "url": "https://spinstatelabs.ca"
+  },
+  "homepage": "https://spinstatelabs.ca/field",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SpinStateLabs/Force-Field"
+  },
+  "license": "MIT",
+  "keywords": [
+    "field",
+    "ai-governance",
+    "agentic-ai",
+    "ai-sovereignty",
+    "ai-federation",
+    "manifest",
+    "audit",
+    "spin-state-labs"
+  ]
+}

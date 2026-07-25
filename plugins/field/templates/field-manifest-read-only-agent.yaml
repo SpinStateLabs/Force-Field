@@ -1,0 +1,83 @@
+# FIELD Manifest — Read-Only Agent Template
+# For retrieval, research, and analysis agents that never take actions.
+# Fill in every <TODO>. Run `/field validate` after editing.
+
+apiVersion: field.spinstatelabs.ca/v1
+kind: FieldManifest
+metadata:
+  name: "<TODO agent-name>"
+  created: "<TODO ISO 8601>"
+  updated: "<TODO ISO 8601>"
+
+# ─── F ─ FEDERATION ────────────────────────────────────────────
+federation:
+  trust_boundary: "<TODO your-org>"
+  allowed_peers: []                          # read-only agents are isolated by default
+  contract_schema: "agent-mcp-v1"
+  peer_verification: "none"
+  data_crossing:
+    allowed: []                              # no outbound data
+    forbidden: ["*"]                         # blanket deny
+
+# ─── I ─ IDENTITY ──────────────────────────────────────────────
+identity:
+  principal: "<TODO principal>"
+  org: "<TODO org-slug>"
+  jurisdiction: "<TODO ISO 3166>"
+  data_scope: "internal"
+  agent_id: "<TODO agent-id>"
+  version: "1.0.0"
+
+# ─── E ─ ENFORCEMENT ───────────────────────────────────────────
+# Minimal spend — read-only should not accrue cost from actions.
+enforcement:
+  kill_switch: "<TODO halt-endpoint>"
+  spend_cap_usd: 50
+  spend_reset: "monthly"
+  escalation_triggers:
+    - "any_write_attempt"                    # writes should never happen
+    - "external_send_attempt"
+    - "network_request_outside_allowlist"
+  irreversible_actions: []                   # no irreversible actions permitted
+  rate_limits:
+    requests_per_minute: 60
+    actions_per_hour: 0                      # ZERO actions — read only
+
+# ─── L ─ LEDGER ────────────────────────────────────────────────
+# Lighter retention — read-only agents create less audit surface.
+ledger:
+  store: "<TODO ledger-store>"
+  retention_days: 365                        # 1 year sufficient for read-only
+  cryptographic_seal: false                  # optional for read-only
+  includes:
+    - "decisions"
+    - "refusals"
+  excludes:
+    - "raw_prompts"
+    - "retrieved_content"                    # log queries, not results
+
+# ─── D ─ DELEGATION ────────────────────────────────────────────
+# Wide read scope, zero write scope.
+delegation:
+  granted_by: "<TODO authorizer>"
+  granted_at: "<TODO ISO 8601>"
+  scope:
+    - "read_documents"
+    - "read_metadata"
+    - "generate_summary"
+    - "generate_analysis"
+  scope_forbidden:
+    - "write_*"                              # blanket write ban
+    - "external_send"
+    - "delete_*"
+    - "modify_*"
+  valid_until: "<TODO expiry-ISO>"
+  revocation_url: "<TODO revocation-endpoint>"
+
+# ─── FORCE with brainstorm preset ──────────────────────────────
+# Read-only research/analysis agents benefit from FORCE but without O
+# (objections-first can hinder exploratory reading).
+runtime_protocol:
+  name: FORCE
+  version: 1.0
+  preset: "brainstorm"                       # F + C + E, no O, no R strict

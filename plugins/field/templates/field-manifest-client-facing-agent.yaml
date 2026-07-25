@@ -1,0 +1,101 @@
+# FIELD Manifest — Client-Facing Agent Template
+# For agents that interact directly with clients (customer support, sales enablement, client onboarding).
+# Fill in every <TODO>. Run `/field validate` after editing.
+
+apiVersion: field.spinstatelabs.ca/v1
+kind: FieldManifest
+metadata:
+  name: "<TODO agent-name>"
+  created: "<TODO ISO 8601>"
+  updated: "<TODO ISO 8601>"
+
+# ─── F ─ FEDERATION ────────────────────────────────────────────
+# Client-facing agents interact with external systems — tight peer allowlist.
+federation:
+  trust_boundary: "<TODO your-org>"
+  allowed_peers:
+    - "hubspot.com"                          # or your CRM
+    - "attio.com"
+    - "sendgrid.com"                         # or your email provider
+    - "anthropic.com"
+  contract_schema: "agent-mcp-v1"
+  peer_verification: "oauth"                 # OAuth for third-party integrations
+  data_crossing:
+    allowed:
+      - "client_conversation_metadata"
+      - "engagement_events"
+    forbidden:
+      - "client_pii_beyond_authorization"
+      - "internal_pricing_logic"
+      - "unfiled_proposals"
+
+# ─── I ─ IDENTITY ──────────────────────────────────────────────
+identity:
+  principal: "<TODO customer-ops-owner>"
+  org: "<TODO org-slug>"
+  jurisdiction: "<TODO ISO 3166>"
+  data_scope: "client-facing"
+  agent_id: "<TODO agent-id>"
+  version: "1.0.0"
+
+# ─── E ─ ENFORCEMENT ───────────────────────────────────────────
+# Tight — anything client-touching escalates.
+enforcement:
+  kill_switch: "<TODO halt-endpoint>"
+  spend_cap_usd: 100
+  spend_reset: "weekly"                      # weekly reset for client agents
+  escalation_triggers:
+    - "external_send"                        # every external message reviewed
+    - "commitment_language"                  # "we will", "we can", "guaranteed"
+    - "pricing_discussion"
+    - "legal_language"
+    - "escalation_request_from_client"
+  irreversible_actions:
+    - "send_email_external"
+    - "post_public_content"
+    - "commit_to_deadline"
+  rate_limits:
+    requests_per_minute: 30
+    actions_per_hour: 50
+
+# ─── L ─ LEDGER ────────────────────────────────────────────────
+# Full conversation retention for client interactions.
+ledger:
+  store: "<TODO ledger-store>"
+  retention_days: 2555                       # 7 years — client interactions
+  cryptographic_seal: true
+  seal_algorithm: "sha256-chained"
+  includes:
+    - "decisions"
+    - "actions"
+    - "delegations"
+    - "refusals"
+    - "escalations"
+    - "outbound_messages"                    # log every message sent
+  excludes:
+    - "raw_prompts"
+
+# ─── D ─ DELEGATION ────────────────────────────────────────────
+# Communication-focused scope; nothing commercial without human.
+delegation:
+  granted_by: "<TODO authorizer>"
+  granted_at: "<TODO ISO 8601>"
+  scope:
+    - "read_crm_records"
+    - "draft_email_reply"                    # DRAFT only, never auto-send
+    - "log_conversation"
+    - "flag_for_human_review"
+  scope_forbidden:
+    - "commit_to_price"
+    - "commit_to_deadline"
+    - "sign_agreements"
+    - "issue_credits_or_refunds"
+    - "auto_send_email"                      # human sends, never agent
+  valid_until: "<TODO expiry-ISO>"
+  revocation_url: "<TODO revocation-endpoint>"
+
+# ─── FORCE with draft preset ───────────────────────────────────
+runtime_protocol:
+  name: FORCE
+  version: 1.0
+  preset: "draft"                            # F+C, minimal constraints for tone

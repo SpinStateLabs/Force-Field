@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://spinstatelabs.ca/schemas/field-manifest-v1.json",
+  "title": "FIELD Manifest v1",
+  "description": "Governance manifest schema for agentic AI systems. Spin State Labs.",
+  "type": "object",
+  "required": ["apiVersion", "kind", "metadata", "federation", "identity", "enforcement", "ledger", "delegation"],
+  "properties": {
+    "apiVersion": {
+      "type": "string",
+      "const": "field.spinstatelabs.ca/v1"
+    },
+    "kind": {
+      "type": "string",
+      "const": "FieldManifest"
+    },
+    "metadata": {
+      "type": "object",
+      "required": ["name", "created"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "created": { "type": "string", "format": "date-time" },
+        "updated": { "type": "string", "format": "date-time" }
+      }
+    },
+    "federation": {
+      "type": "object",
+      "required": ["trust_boundary", "allowed_peers"],
+      "properties": {
+        "trust_boundary": { "type": "string", "minLength": 1 },
+        "allowed_peers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Empty array is valid — indicates an isolated agent"
+        },
+        "contract_schema": { "type": "string" },
+        "peer_verification": {
+          "type": "string",
+          "enum": ["mtls", "oauth", "api_key", "none"]
+        },
+        "data_crossing": {
+          "type": "object",
+          "properties": {
+            "allowed": { "type": "array", "items": { "type": "string" } },
+            "forbidden": { "type": "array", "items": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "required": ["principal", "org", "jurisdiction", "agent_id"],
+      "properties": {
+        "principal": { "type": "string", "minLength": 1 },
+        "org": { "type": "string", "minLength": 1 },
+        "jurisdiction": {
+          "type": "string",
+          "description": "ISO 3166-1 or 3166-2 code"
+        },
+        "data_scope": { "type": "string" },
+        "agent_id": { "type": "string", "minLength": 1 },
+        "version": { "type": "string" }
+      }
+    },
+    "enforcement": {
+      "type": "object",
+      "required": ["kill_switch", "escalation_triggers"],
+      "properties": {
+        "kill_switch": {
+          "type": "string",
+          "minLength": 1,
+          "description": "URL or identifier for the halt endpoint"
+        },
+        "spend_cap_usd": { "type": "number", "minimum": 0 },
+        "spend_reset": {
+          "type": "string",
+          "enum": ["daily", "weekly", "monthly", "never"]
+        },
+        "escalation_triggers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "irreversible_actions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "rate_limits": {
+          "type": "object",
+          "properties": {
+            "requests_per_minute": { "type": "integer", "minimum": 0 },
+            "actions_per_hour": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "ledger": {
+      "type": "object",
+      "required": ["store", "retention_days", "includes"],
+      "properties": {
+        "store": {
+          "type": "string",
+          "minLength": 1,
+          "description": "URI of the ledger store"
+        },
+        "retention_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "cryptographic_seal": { "type": "boolean" },
+        "seal_algorithm": {
+          "type": "string",
+          "enum": ["sha256-chained", "merkle", "none"]
+        },
+        "includes": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "excludes": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "external_verifier": {
+          "type": "string",
+          "format": "uri"
+        }
+      }
+    },
+    "delegation": {
+      "type": "object",
+      "required": ["granted_by", "granted_at", "scope", "valid_until"],
+      "properties": {
+        "granted_by": { "type": "string", "minLength": 1 },
+        "granted_at": { "type": "string", "format": "date-time" },
+        "scope": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1
+        },
+        "scope_forbidden": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "valid_until": { "type": "string", "format": "date-time" },
+        "revocation_url": { "type": "string" },
+        "chain_of_authority": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["principal", "delegated_to"],
+            "properties": {
+              "principal": { "type": "string" },
+              "delegated_to": { "type": "string" },
+              "via": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "runtime_protocol": {
+      "type": "object",
+      "description": "Optional. Declares the runtime prompt protocol the agent applies. Default: FORCE.",
+      "properties": {
+        "name": { "type": "string", "enum": ["FORCE", "none", "custom"] },
+        "version": { "type": "string" },
+        "preset": {
+          "type": "string",
+          "enum": ["analysis", "brainstorm", "draft", "audit", "custom"]
+        },
+        "components": {
+          "type": "object",
+          "properties": {
+            "F": { "type": "boolean" },
+            "O": { "type": "boolean" },
+            "R": { "type": "boolean" },
+            "C": { "type": "boolean" },
+            "E": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

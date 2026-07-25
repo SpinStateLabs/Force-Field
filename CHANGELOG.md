@@ -6,12 +6,57 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
-## [Unreleased]
+## marketplace — 1.1.0 — 2026-06-25
 
-### Planned
+### Added
 
-- **`field` plugin** — FIELD persona development framework. Design-time methodology for building agent personas that stay aligned, auditable, and production-ready. Target: Q3 2026. See [ROADMAP.md](ROADMAP.md).
-- FORCE v1.1 refinements based on real-world usage feedback.
+- FIELD plugin (v1.0.0) added to catalog.
+- Marketplace description updated to reflect both FORCE (runtime) and FIELD (governance) layers.
+
+---
+
+## field — 1.0.0 — 2026-06-25
+
+### Added
+
+- Initial release of the FIELD governance framework plugin.
+- Five constraints for agentic AI deployment:
+  - **F** — Federation (multi-agent trust protocols)
+  - **I** — Identity (attribution, jurisdiction, data scope)
+  - **E** — Enforcement (kill switches, spend caps, escalation triggers)
+  - **L** — Ledger (immutable audit trail)
+  - **D** — Delegation (authorization chain from principal to agent)
+- `/field` slash command:
+  - `/field` / `/field status` — display current manifest
+  - `/field init [template]` — bootstrap manifest from template
+  - `/field validate` — check manifest against JSON schema
+  - `/field assess` — interactive five-letter compliance walkthrough
+  - `/field audit` — generate audit-ready summary for external review
+  - `/field export` — convert manifest to JSON
+- Four manifest templates:
+  - `default` — baseline for general use
+  - `financial-agent` — FP&A, audit-adjacent, 7-year ledger retention
+  - `read-only-agent` — retrieval and analysis with zero write scope
+  - `client-facing-agent` — customer interactions with draft-only outbound
+- JSON Schema (`manifest-schema.json`) for validation.
+- Full framework reference (`framework.md`) with detailed manifest examples.
+- FORCE composition — every FIELD manifest declares a `runtime_protocol` block; defaults to FORCE preset "analysis".
+
+### Known limitations
+
+- v1.0 is a manifest tool, not a runtime enforcer. Actual enforcement (kill switches firing, spend caps deducting, ledger writes) requires infrastructure the user builds around the manifest.
+- Cryptographic sealing is declared in manifests but not implemented by this plugin — the configured ledger store must handle it.
+- FORCE composition is asserted in v1.0 but not automatically wired — runtime application of FORCE alongside a FIELD-governed agent is separate infrastructure.
+- Third-party audit format is `/field audit` output; independent verification is a separate service.
+
+---
+
+## [Unreleased] — Planned
+
+- FIELD v1.1 — refinements based on real-world use; possible reference implementation of runtime enforcement in n8n.
+- FORCE v1.1 — usage-driven refinements.
+- Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
+- FORCE + FIELD runtime composition — automatic FORCE application inside FIELD-declared agents.
 
 ---
 
@@ -38,5 +83,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
-[Unreleased]: https://github.com/SpinStateLabs/Force-Field/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/SpinStateLabs/Force-Field/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/SpinStateLabs/Force-Field/releases/tag/v1.1.0
 [1.0.0]: https://github.com/SpinStateLabs/Force-Field/releases/tag/v1.0.0

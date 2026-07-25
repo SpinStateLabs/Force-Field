@@ -1,0 +1,102 @@
+# FIELD Manifest — Financial Agent Template
+# Preset for FP&A, audit-adjacent, and financial planning agents.
+# Fill in every <TODO>. Run `/field validate` after editing.
+
+apiVersion: field.spinstatelabs.ca/v1
+kind: FieldManifest
+metadata:
+  name: "<TODO agent-name>"
+  created: "<TODO ISO 8601>"
+  updated: "<TODO ISO 8601>"
+
+# ─── F ─ FEDERATION ────────────────────────────────────────────
+federation:
+  trust_boundary: "<TODO your-org>"
+  allowed_peers:                             # typical FP&A stack peers
+    - "netsuite.com"
+    - "oracle.com"
+    - "anthropic.com"
+  contract_schema: "agent-mcp-v1"
+  peer_verification: "mtls"                  # mTLS for financial systems
+  data_crossing:
+    allowed: ["metadata", "aggregates"]
+    forbidden: ["pii", "raw_gl_lines", "customer_details"]
+
+# ─── I ─ IDENTITY ──────────────────────────────────────────────
+identity:
+  principal: "<TODO cfo-or-vp-finance-email>"
+  org: "<TODO client-org-slug>"
+  jurisdiction: "<TODO ISO 3166 code>"
+  data_scope: "client-tier-A"                # financial data is Tier A
+  agent_id: "<TODO stable-agent-id>"
+  version: "1.0.0"
+
+# ─── E ─ ENFORCEMENT ───────────────────────────────────────────
+# Tight harness for financial agents. Small spend cap. Many escalations.
+enforcement:
+  kill_switch: "<TODO halt-endpoint>"
+  spend_cap_usd: 250                         # conservative for financial
+  spend_reset: "monthly"
+  escalation_triggers:
+    - "amount_gt_10000"                      # SOX materiality
+    - "je_post_attempt"                      # every JE posts to human
+    - "coa_modification_attempt"
+    - "external_send"
+    - "period_close_action"
+  irreversible_actions:
+    - "post_je"
+    - "close_period"
+    - "modify_coa"
+  rate_limits:
+    requests_per_minute: 30
+    actions_per_hour: 100
+
+# ─── L ─ LEDGER ────────────────────────────────────────────────
+# 7-year retention for financial audit. Cryptographic seal required.
+ledger:
+  store: "<TODO s3://your-audit-store>"
+  retention_days: 2555                       # 7 years — SOX/GAAP standard
+  cryptographic_seal: true
+  seal_algorithm: "sha256-chained"
+  includes:
+    - "decisions"
+    - "actions"
+    - "delegations"
+    - "refusals"
+    - "escalations"
+    - "je_drafts"                            # drafts included for audit trail
+  excludes:
+    - "raw_prompts"
+  external_verifier: "<TODO audit-verifier-url>"
+
+# ─── D ─ DELEGATION ────────────────────────────────────────────
+# Explicit narrow scope — read-heavy, write-restricted.
+delegation:
+  granted_by: "<TODO cfo-or-controller-email>"
+  granted_at: "<TODO ISO 8601>"
+  scope:
+    - "read_gl"
+    - "read_subledgers"
+    - "generate_variance_narrative"
+    - "draft_je_amount_lt_10000"             # DRAFT only — never auto-post
+    - "email_to_designated_recipients"
+  scope_forbidden:
+    - "post_je"                              # posting requires human
+    - "modify_coa"
+    - "close_period"
+    - "email_external"
+  valid_until: "<TODO fiscal-year-end-ISO>"
+  revocation_url: "<TODO revocation-endpoint>"
+  chain_of_authority:
+    - principal: "<TODO client-cfo>"
+      delegated_to: "<TODO spin-state-account-owner>"
+      via: "MSA-<TODO msa-id>"
+    - principal: "<TODO spin-state-account-owner>"
+      delegated_to: "<TODO agent-id>"
+      via: "spin-state-internal-v1"
+
+# ─── FORCE with audit preset ───────────────────────────────────
+runtime_protocol:
+  name: FORCE
+  version: 1.0
+  preset: "audit"                            # source-grounded, no objections-first

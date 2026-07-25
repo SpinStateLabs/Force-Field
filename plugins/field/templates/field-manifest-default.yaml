@@ -1,0 +1,77 @@
+# FIELD Manifest — Default Template
+# Fill in every value marked <TODO>. Run `/field validate` after editing.
+
+apiVersion: field.spinstatelabs.ca/v1
+kind: FieldManifest
+metadata:
+  name: "<TODO agent-name>"
+  created: "<TODO ISO 8601 timestamp>"
+  updated: "<TODO ISO 8601 timestamp>"
+
+# ─── F ─ FEDERATION ────────────────────────────────────────────
+# Rules for how this agent interoperates with agents from other trust domains.
+federation:
+  trust_boundary: "<TODO your-org>"        # e.g. spin-state-labs
+  allowed_peers: []                         # explicit allowlist; empty = isolated
+  contract_schema: "agent-mcp-v1"
+  peer_verification: "none"                 # mtls | oauth | api_key | none
+  data_crossing:
+    allowed: []                             # what data may leave this trust domain
+    forbidden: ["pii", "raw_documents"]     # explicit deny
+
+# ─── I ─ IDENTITY ──────────────────────────────────────────────
+# Who this agent is and whose interests it represents.
+identity:
+  principal: "<TODO principal-email-or-role>"
+  org: "<TODO org-slug>"
+  jurisdiction: "<TODO ISO 3166 code>"      # e.g. CA-ON, US-DE, EU
+  data_scope: "<TODO classification>"       # e.g. client-tier-A, internal, public
+  agent_id: "<TODO stable-agent-id>"
+  version: "1.0.0"
+
+# ─── E ─ ENFORCEMENT ───────────────────────────────────────────
+# Runtime harnessing — the brakes and rails.
+enforcement:
+  kill_switch: "<TODO halt-endpoint-URL>"   # REQUIRED — no manifest ships without this
+  spend_cap_usd: 100
+  spend_reset: "monthly"                    # daily | weekly | monthly | never
+  escalation_triggers:                      # human review required for these
+    - "pii_access"
+    - "external_send"
+  irreversible_actions: []                  # explicit confirmation required
+  rate_limits:
+    requests_per_minute: 60
+    actions_per_hour: 200
+
+# ─── L ─ LEDGER ────────────────────────────────────────────────
+# Immutable audit trail.
+ledger:
+  store: "<TODO ledger-store-URI>"          # e.g. s3://your-audit-bucket/agent-id
+  retention_days: 2555                      # 7 years default (financial audit norm)
+  cryptographic_seal: true
+  seal_algorithm: "sha256-chained"
+  includes:
+    - "decisions"
+    - "actions"
+    - "delegations"
+    - "refusals"
+    - "escalations"
+  excludes:
+    - "raw_prompts"                         # decisions logged, not verbatim prompts
+
+# ─── D ─ DELEGATION ────────────────────────────────────────────
+# Authorization chain from human principal to agent.
+delegation:
+  granted_by: "<TODO authorizing-principal>"
+  granted_at: "<TODO ISO 8601 timestamp>"
+  scope: []                                 # explicit list of authorized actions
+  scope_forbidden: []                       # explicit deny (belt and suspenders)
+  valid_until: "<TODO expiry-ISO-8601>"
+  revocation_url: "<TODO revocation-endpoint>"
+
+# ─── COMPOSITION WITH FORCE ────────────────────────────────────
+# Runtime prompt protocol this agent applies. Default: FORCE preset=analysis.
+runtime_protocol:
+  name: FORCE
+  version: 1.0
+  preset: "analysis"

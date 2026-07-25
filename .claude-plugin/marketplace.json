@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "force-field",
-  "version": "1.0.0",
-  "description": "Spin State Labs · Claude Code plugin marketplace. AI hygiene, financial planning, and analytical skills for production-grade work.",
+  "version": "1.1.0",
+  "description": "Spin State Labs · Claude Code plugin marketplace. The Force Field Framework: FORCE (runtime prompt protocol) + FIELD (governance layer for agentic AI).",
   "owner": {
     "name": "Spin State Labs",
     "email": "don@spinstatelabs.ca",
@@ -12,7 +12,7 @@
     {
       "name": "force",
       "source": "./plugins/force",
-      "description": "FORCE protocol — toggle Forbid-flattery / Oppose-premise / Reference-sources / Chain-of-thought / Express-uncertainty constraints on or off via the /force slash command.",
+      "description": "FORCE runtime prompt protocol. Toggle Forbid-flattery / Oppose-premise / Reference-sources / Chain-of-thought / Express-uncertainty constraints via the /force slash command.",
       "version": "1.0.0",
       "category": "ai-hygiene",
       "tags": ["force", "anti-sycophancy", "anti-hallucination", "prompt-engineering", "fp-and-a", "audit"],
@@ -20,6 +20,19 @@
         "name": "Don Hagell",
         "email": "don@spinstatelabs.ca",
         "url": "https://spinstatelabs.ca/force"
+      }
+    },
+    {
+      "name": "field",
+      "source": "./plugins/field",
+      "description": "FIELD governance framework for agentic AI. Generate, validate, and audit governance manifests covering Federation, Identity, Enforcement, Ledger, and Delegation.",
+      "version": "1.0.0",
+      "category": "ai-governance",
+      "tags": ["field", "ai-governance", "agentic-ai", "ai-sovereignty", "ai-federation", "manifest", "audit"],
+      "author": {
+        "name": "Don Hagell",
+        "email": "don@spinstatelabs.ca",
+        "url": "https://spinstatelabs.ca/field"
       }
     }
   ]
