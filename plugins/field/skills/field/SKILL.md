@@ -26,7 +26,7 @@ Do NOT apply this skill for: general AI questions unrelated to agent deployment,
 - **F — Federation.** Multi-agent trust protocols across ownership boundaries. Trusted peers, contract semantics, boundary controls.
 - **I — Identity.** Attribution — principal, org, jurisdiction, data scope.
 - **E — Enforcement.** Runtime harnessing — kill switches, spend caps, escalation triggers, irreversible action rules.
-- **L — Ledger.** Immutable audit trail. Retention, cryptographic sealing, what gets logged.
+- **L — Ledger.** Cryptographic immutable audit trail. Retention, tamper-evident sealing, what gets logged.
 - **D — Delegation.** Authorization chain — granted_by, scope, expiry, revocation.
 
 ## Manifest location (CRITICAL)

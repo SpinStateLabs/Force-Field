@@ -24,7 +24,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
   - **F** — Federation (multi-agent trust protocols)
   - **I** — Identity (attribution, jurisdiction, data scope)
   - **E** — Enforcement (kill switches, spend caps, escalation triggers)
-  - **L** — Ledger (immutable audit trail)
+  - **L** — Ledger (cryptographic immutable audit trail)
   - **D** — Delegation (authorization chain from principal to agent)
 - `/field` slash command:
   - `/field` / `/field status` — display current manifest

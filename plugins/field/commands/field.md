@@ -142,7 +142,7 @@ FIELD constrains:
   F  Federation    — trust protocols across agent boundaries
   I  Identity      — who owns the agent, whose interests it represents
   E  Enforcement   — runtime harnessing (kill switches, spend caps, escalation)
-  L  Ledger        — immutable audit trail
+  L  Ledger        — cryptographic immutable audit trail
   D  Delegation    — authorization chain from human to agent
 
 Sibling of FORCE (runtime prompt protocol). See spinstatelabs.ca/field for full framework.

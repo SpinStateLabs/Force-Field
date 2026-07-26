@@ -9,7 +9,7 @@ FIELD is a governance framework covering five dimensions of autonomous agent dep
 - **F** — Federation. Trust protocols across agent boundaries.
 - **I** — Identity. Who owns the agent, whose interests it represents.
 - **E** — Enforcement. Kill switches, spend caps, escalation triggers.
-- **L** — Ledger. Immutable audit trail.
+- **L** — Ledger. Cryptographic immutable audit trail.
 - **D** — Delegation. Authorization chain from human to agent.
 
 The plugin lets you generate, validate, and audit FIELD manifests via the `/field` slash command.

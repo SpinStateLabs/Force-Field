@@ -96,7 +96,7 @@
     },
     "ledger": {
       "type": "object",
-      "required": ["store", "retention_days", "includes"],
+      "required": ["store", "retention_days", "cryptographic_seal", "seal_algorithm", "includes"],
       "properties": {
         "store": {
           "type": "string",
@@ -107,10 +107,15 @@
           "type": "integer",
           "minimum": 1
         },
-        "cryptographic_seal": { "type": "boolean" },
+        "cryptographic_seal": {
+          "type": "boolean",
+          "const": true,
+          "description": "Baseline in FIELD v1.0 — sealing is non-negotiable. Must be true."
+        },
         "seal_algorithm": {
           "type": "string",
-          "enum": ["sha256-chained", "merkle", "none"]
+          "enum": ["sha256-chained", "merkle"],
+          "description": "Which tamper-evident sealing algorithm secures the ledger. No 'none' option — sealing is required."
         },
         "includes": {
           "type": "array",

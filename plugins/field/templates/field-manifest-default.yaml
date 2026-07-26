@@ -44,7 +44,9 @@ enforcement:
     actions_per_hour: 200
 
 # ─── L ─ LEDGER ────────────────────────────────────────────────
-# Immutable audit trail.
+# Cryptographic immutable audit trail. Sealing is baseline in FIELD v1.0 —
+# cryptographic_seal must be true. If tamper-evident logging isn't achievable
+# in your environment, the agent shouldn't be a FIELD-governed agent.
 ledger:
   store: "<TODO ledger-store-URI>"          # e.g. s3://your-audit-bucket/agent-id
   retention_days: 2555                      # 7 years default (financial audit norm)

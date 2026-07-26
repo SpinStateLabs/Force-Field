@@ -89,13 +89,14 @@ enforcement:
 
 ## [L] LEDGER
 
-**What it constrains:** the immutable audit trail. If it isn't logged, it didn't happen. Accountability requires a record the agent cannot rewrite.
+**What it constrains:** the cryptographic immutable audit trail. If it isn't logged, it didn't happen — and if the record can be edited after the fact, the audit is theatre. Ledger writes tamper-evident, cryptographically sealed records that neither the agent nor the operator can rewrite.
 
 **Concrete concerns:**
 - Where does the ledger live?
 - How long is it retained?
-- Is it cryptographically sealed?
+- Which cryptographic sealing algorithm secures it? (No longer "is it sealed?" — sealing is baseline in v1.0.)
 - What events get logged?
+- Who holds the verification keys, and how is tampering detected?
 
 **Manifest section:**
 

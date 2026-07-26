@@ -48,7 +48,8 @@ enforcement:
 ledger:
   store: "<TODO ledger-store>"
   retention_days: 365                        # 1 year sufficient for read-only
-  cryptographic_seal: false                  # optional for read-only
+  cryptographic_seal: true                   # baseline in FIELD v1.0 — sealing is non-negotiable
+  seal_algorithm: "sha256-chained"
   includes:
     - "decisions"
     - "refusals"

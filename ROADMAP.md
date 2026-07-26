@@ -71,7 +71,7 @@ Two complementary layers, two plugins, one marketplace. **Both shipped.**
 - **F** — Federation. Multi-agent trust protocols across ownership boundaries.
 - **I** — Identity. Attribution: who owns the agent, whose interests it represents.
 - **E** — Enforcement. Runtime harnessing — kill switches, spend caps, escalation.
-- **L** — Ledger. Immutable audit trail of every decision and action.
+- **L** — Ledger. Cryptographic immutable audit trail of every decision and action.
 - **D** — Delegation. Authorization chain from human principal to autonomous agent.
 
 ### Install
