@@ -1,6 +1,6 @@
-# Force Field Framework — Roadmap
+# Force Field Protocol — Roadmap
 
-The **Force Field Framework** is Spin State Labs' approach to building agentic AI that's defensible in production: aligned, auditable, sovereign, and resistant to the two failure modes that have ended careers — sycophancy and hallucination.
+The **Force Field Protocol** is Spin State Labs' approach to building agentic AI that's defensible in production: aligned, auditable, sovereign, and resistant to the two failure modes that have ended careers — sycophancy and hallucination.
 
 Two complementary layers, two plugins, one marketplace. **Both shipped.**
 
@@ -111,7 +111,7 @@ FIELD **is**:
 
 ## 🔜 What's next
 
-### Force Field Framework v1.1 (target: Q3 2026)
+### Force Field Protocol v1.1 (target: Q3 2026)
 
 Usage-driven refinements to both FORCE and FIELD based on real-world feedback.
 
@@ -148,4 +148,4 @@ Not committed. On the radar once FORCE + FIELD have production validation:
 
 ---
 
-*Spin State Labs · Force Field Framework Roadmap v2.0 · Updated June 2026*
+*Spin State Labs · Force Field Protocol Roadmap v2.0 · Updated June 2026*

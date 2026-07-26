@@ -1,6 +1,6 @@
 # field — Claude Code Plugin
 
-Governance manifest tool for agentic AI systems. The design-time counterpart to the FORCE runtime protocol. Together they form the Force Field Framework.
+Governance manifest tool for agentic AI systems. The design-time counterpart to the FORCE runtime protocol. Together they form the Force Field Protocol.
 
 ## What it does
 

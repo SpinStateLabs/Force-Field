@@ -1,6 +1,6 @@
 # FIELD Framework Reference
 
-The governance layer of the Force Field Framework. Each letter constrains a distinct dimension of agentic AI deployment.
+The governance layer of the Force Field Protocol. Each letter constrains a distinct dimension of agentic AI deployment.
 
 ---
 
