@@ -66,7 +66,9 @@ ledger:
 delegation:
   granted_by: "<TODO authorizing-principal>"
   granted_at: "<TODO ISO 8601 timestamp>"
-  scope: []                                 # explicit list of authorized actions
+  scope:                                    # explicit list of authorized actions
+    - <TODO_authorized_action_1>
+    - <TODO_authorized_action_2>
   scope_forbidden: []                       # explicit deny (belt and suspenders)
   valid_until: "<TODO expiry-ISO-8601>"
   revocation_url: "<TODO revocation-endpoint>"
@@ -75,5 +77,5 @@ delegation:
 # Runtime prompt protocol this agent applies. Default: FORCE preset=analysis.
 runtime_protocol:
   name: FORCE
-  version: 1.0
+  version: "1.0"
   preset: "analysis"

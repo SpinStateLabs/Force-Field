@@ -80,5 +80,5 @@ delegation:
 # (objections-first can hinder exploratory reading).
 runtime_protocol:
   name: FORCE
-  version: 1.0
+  version: "1.0"
   preset: "brainstorm"                       # F + C + E, no O, no R strict

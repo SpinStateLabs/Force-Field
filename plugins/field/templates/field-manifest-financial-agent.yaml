@@ -98,5 +98,5 @@ delegation:
 # ─── FORCE with audit preset ───────────────────────────────────
 runtime_protocol:
   name: FORCE
-  version: 1.0
+  version: "1.0"
   preset: "audit"                            # source-grounded, no objections-first
