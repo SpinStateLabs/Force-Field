@@ -2,13 +2,13 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://field.spinstatelabs.ca/v1/manifest-schema.json",
   "title": "FIELD Governance Manifest",
-  "description": "Spin State Labs FIELD v1 governance manifest for a single agentic AI deployment. Every FIELD-governed agent carries exactly one manifest. All five sections (Federation, Identity, Enforcement, Ledger, Delegation) are required. Critical-gap rules: no kill switch, no delegation grantor, or an unsealed ledger make a manifest INVALID.",
+  "description": "Spin State Labs FIELD v1 governance manifest for a single agentic AI deployment. Every FIELD-governed agent carries exactly one manifest. All five sections (Federated, Identity, Enforcement, Ledger, Delegation) are required. Critical-gap rules: no kill switch, no delegation grantor, or an unsealed ledger make a manifest INVALID.",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "schema_version",
     "agent",
-    "federation",
+    "federated",
     "identity",
     "enforcement",
     "ledger",
@@ -31,7 +31,7 @@
       }
     },
 
-    "federation": {
+    "federated": {
       "type": "object",
       "description": "F — rules for operating across ownership/trust boundaries.",
       "additionalProperties": false,

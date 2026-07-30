@@ -8,8 +8,8 @@ agent:
   description: Retrieval / analysis agent. Reads and reasons; never writes, sends, or transacts.
   version: "0.1.0"
 
-# F — Federation. Isolated retrieval agent.
-federation:
+# F — Federated. Isolated retrieval agent.
+federated:
   isolated: true
   allowed_peers: []
   contracts: []

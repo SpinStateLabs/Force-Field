@@ -66,7 +66,7 @@ After any state mutation:
 Check the manifest against `skills/field/manifest-schema.json` AND the critical-gap rules in
 `skills/field/framework.md`. A manifest is **INVALID** if any of these hold:
 
-- any of `federation` / `identity` / `enforcement` / `ledger` / `delegation` is missing
+- any of `federated` / `identity` / `enforcement` / `ledger` / `delegation` is missing
 - `identity.principal` is absent
 - `enforcement.kill_switch` is absent or missing `endpoint`/`method`
 - `ledger.cryptographic_seal` is not `true`, or `seal_algorithm` is `none`/absent
@@ -124,7 +124,7 @@ Templates:
   read-only-agent     retrieval only, zero write scope
   client-facing-agent draft-only outbound, human review, no autonomous send
 
-The five letters: Federation · Identity · Enforcement · Ledger · Delegation
+The five letters: Federated · Identity · Enforcement · Ledger · Delegation
 ```
 
 ## After state change

@@ -1,6 +1,6 @@
 ---
 name: field
-description: Apply Spin State Labs' FIELD governance framework for agentic AI. Generate, validate, and audit FIELD governance manifests (Federation, Identity, Enforcement, Ledger, Delegation). Use whenever the user invokes /field, is designing a new autonomous agent, needs to define kill switches or spend caps or escalation triggers, scopes identity or delegation chains, is preparing an agent deployment for audit, or is composing FIELD with the FORCE runtime protocol. FIELD is design-time governance; FORCE is runtime prompt hygiene. Read state before applying.
+description: Apply Spin State Labs' FIELD governance framework for agentic AI. Generate, validate, and audit FIELD governance manifests (Federated, Identity, Enforcement, Ledger, Delegation). Use whenever the user invokes /field, is designing a new autonomous agent, needs to define kill switches or spend caps or escalation triggers, scopes identity or delegation chains, is preparing an agent deployment for audit, or is composing FIELD with the FORCE runtime protocol. FIELD is design-time governance; FORCE is runtime prompt hygiene. Read state before applying.
 ---
 
 # FIELD Governance Skill
@@ -16,9 +16,9 @@ Apply this skill when ANY of the following is true:
 3. The user needs to define kill switches, spend caps, escalation triggers, or other runtime enforcement mechanisms
 4. The user is scoping identity/attribution — who owns an agent, whose interests it serves, what jurisdiction governs it
 5. The user is establishing delegation — what actions have been authorized, by whom, in what scope, with what expiry
-6. The user is designing federation between multiple agents from different organizations
+6. The user is designing federated trust between multiple agents from different organizations
 7. The user is preparing an agent deployment for audit or compliance review
-8. The user asks about any of Federation / Identity / Enforcement / Ledger / Delegation in an agent context
+8. The user asks about any of Federated / Identity / Enforcement / Ledger / Delegation in an agent context
 
 Do NOT apply this skill for: general AI questions unrelated to agent deployment, purely prompt-engineering questions (that's FORCE territory), conversations about non-agentic AI use, or single-shot LLM calls without persistent state.
 
@@ -43,7 +43,7 @@ If `master` is `true`, use `preferred_template` when bootstrapping new manifests
 
 ## The five letters
 
-- **F — Federation.** Multi-agent trust protocols across ownership boundaries. Which peers this agent may talk to. What contracts govern the exchange. `isolated: true` (empty peer list) is valid — it declares an *isolated* agent explicitly.
+- **F — Federated.** Multi-agent trust protocols across ownership boundaries. Which peers this agent may talk to. What contracts govern the exchange. `isolated: true` (empty peer list) is valid — it declares an *isolated* agent explicitly.
 - **I — Identity.** Attribution. Principal (whose agent is this?), org, jurisdiction, data scope. An agent without a declared principal is a sovereignty violation.
 - **E — Enforcement.** Runtime harnessing. Kill switches, spend caps, escalation triggers, rules for irreversible actions. An agent without a kill switch is a critical gap — refuse to mark valid.
 - **L — Ledger.** Cryptographic immutable audit trail. `cryptographic_seal: true` is baseline, not optional. Retention period, what gets logged, seal algorithm.
@@ -103,10 +103,10 @@ Be terse. No filler. The user is auditing the state, not reading prose.
 
 ## When generating or editing manifests
 
-Every FIELD manifest MUST include `schema_version`, an `agent` block, and all five sections: `federation`, `identity`, `enforcement`, `ledger`, `delegation`. A manifest missing any is invalid — flag it and offer to fill.
+Every FIELD manifest MUST include `schema_version`, an `agent` block, and all five sections: `federated`, `identity`, `enforcement`, `ledger`, `delegation`. A manifest missing any is invalid — flag it and offer to fill.
 
 Prefer explicit over implicit:
-- `federation.isolated: true` with an empty `allowed_peers` means "isolated agent, no federation" — don't leave it undeclared. If `isolated: false`, `allowed_peers` must be non-empty.
+- `federated.isolated: true` with an empty `allowed_peers` means "isolated agent, no federated peers" — don't leave it undeclared. If `isolated: false`, `allowed_peers` must be non-empty.
 - Missing `enforcement.kill_switch` is a critical gap — refuse to mark valid without one.
 - Missing `delegation.granted_by` is a sovereignty violation — refuse to mark valid without an authorization chain.
 - `ledger.cryptographic_seal` MUST be `true` — the schema treats it as a `const`. `"none"` is not a valid `seal_algorithm`.
@@ -138,7 +138,7 @@ FIELD manifest validation — <path>
   Status: VALID / VALID_WITH_WARNINGS / INVALID
 
   Required sections present:
-    federation:  [✓/✗]
+    federated:   [✓/✗]
     identity:    [✓/✗]
     enforcement: [✓/✗]
     ledger:      [✓/✗]
@@ -165,7 +165,7 @@ FIELD manifest audit — <path>
   Ledger retention: <ledger.retention_days> days
   Cryptographic seal: <ledger.cryptographic_seal> (<ledger.seal_algorithm>)
 
-  F — Federation:  <PASS/GAP>  — <one line summary>
+  F — Federated:   <PASS/GAP>  — <one line summary>
   I — Identity:    <PASS/GAP>  — <one line summary>
   E — Enforcement: <PASS/GAP>  — <one line summary>
   L — Ledger:      <PASS/GAP>  — <one line summary>

@@ -20,7 +20,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 ### Added
 
 - Initial release of the FIELD governance framework skill for agentic AI.
-- Five governance letters: **F**ederation, **I**dentity, **E**nforcement, **L**edger, **D**elegation.
+- Five governance letters: **F**ederated, **I**dentity, **E**nforcement, **L**edger, **D**elegation.
 - `/field` slash command:
   - `/field` / `/field status` — skill state + working manifest
   - `/field on` / `/field off` — master toggle (proactive vs passive)

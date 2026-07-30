@@ -9,8 +9,8 @@ agent:
   description: REPLACE-ME one line on what this agent does
   version: "0.1.0"
 
-# F — Federation. Trust across ownership boundaries. Isolated by default.
-federation:
+# F — Federated. Trust across ownership boundaries. Isolated by default.
+federated:
   isolated: true            # true = no external peers. Set false only if allowed_peers is populated.
   allowed_peers: []
   contracts: []

@@ -11,20 +11,20 @@ verdict. When generating, validating, or auditing a manifest, read the relevant 
 
 ---
 
-## [F] FEDERATION — trust across ownership boundaries
+## [F] FEDERATED — trust across ownership boundaries
 
-**Pillar: AI Federation.** Rules for multi-agent systems where agents from different
+**Pillar: Federated operation.** Rules for multi-agent systems where agents from different
 organizations, ownership structures, or trust domains interoperate. Not federated learning —
-federation here is closer to federated *identity* for autonomous agents.
+the F here is closer to federated *identity* for autonomous agents.
 
 **Constrains:** which external peers this agent may talk to, how those peers are authenticated,
 and what contracts govern each exchange.
 
-**Manifest fields:** `federation.isolated`, `federation.allowed_peers[]`, `federation.contracts[]`.
+**Manifest fields:** `federated.isolated`, `federated.allowed_peers[]`, `federated.contracts[]`.
 
 **Rules:**
 - `isolated` is mandatory and explicit. `isolated: true` declares an agent with no external peers.
-  Do not leave federation posture undeclared — silence is not a valid answer.
+  Do not leave federated posture undeclared — silence is not a valid answer.
 - If `isolated: false`, `allowed_peers` MUST be non-empty. An agent that federates must name whom.
 - Every peer needs a `trust_basis` — how Agent A knows Agent B is authentic and authorized
   (mTLS cert, signed capability token, shared registry entry). "We trust them" is not a trust basis.
@@ -145,7 +145,7 @@ that authority is revoked.
 - **INVALID** if any critical gap is present: any of the five sections absent; no `identity.principal`;
   no `enforcement.kill_switch` (or missing `endpoint`/`method`); no `enforcement.irreversible_action_policy`;
   `ledger.cryptographic_seal ≠ true` or `seal_algorithm` of `none`; no `delegation.granted_by`;
-  or a named federation peer with no `trust_basis`.
+  or a named federated peer with no `trust_basis`.
 - **VALID_WITH_WARNINGS** — all five sections present and every critical rule passes, but non-blocking
   issues remain: unresolved `REPLACE-ME` placeholders, a missing `runtime_protocol`, a past or near-term
   `delegation.expiry`, or a named peer with no governing `contracts` entry. Warnings never downgrade a

@@ -8,8 +8,8 @@ agent:
   description: Drafts outbound client communication. Every send is gated on human review.
   version: "0.1.0"
 
-# F — Federation. Isolated unless a CRM/mail peer is explicitly contracted.
-federation:
+# F — Federated. Isolated unless a CRM/mail peer is explicitly contracted.
+federated:
   isolated: true
   allowed_peers: []
   contracts: []

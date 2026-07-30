@@ -6,7 +6,7 @@ accountable*. FORCE is runtime prompt hygiene; FIELD is design-time governance. 
 
 ## The five letters
 
-- **F** — Federation — trust protocols across ownership boundaries (which peers, on what basis)
+- **F** — Federated — trust protocols across ownership boundaries (which peers, on what basis)
 - **I** — Identity — attribution and sovereignty (whose agent, what jurisdiction, what data scope)
 - **E** — Enforcement — the brakes and rails (kill switch, spend cap, escalation, irreversible-action policy)
 - **L** — Ledger — the immutable, cryptographically sealed audit trail

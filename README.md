@@ -11,7 +11,7 @@ Two layers, two plugins, one marketplace:
 | **FORCE** | Runtime prompt protocol. Constrains what an AI *says*. | `force` | ✅ v1.0 shipped |
 | **FIELD** | Design-time governance for agentic AI. Constrains how an agent is *deployed and accountable*. | `field` | ✅ v1.0 shipped |
 
-FORCE neutralizes sycophancy and hallucination on individual responses. FIELD governs how an autonomous agent is harnessed, who owns it, and how it federates — captured in a per-agent governance manifest (Federation / Identity / Enforcement / Ledger / Delegation). They compose: every FIELD-governed agent runs FORCE at runtime.
+FORCE neutralizes sycophancy and hallucination on individual responses. FIELD governs how an autonomous agent is harnessed, who owns it, and how it federates — captured in a per-agent governance manifest (Federated / Identity / Enforcement / Ledger / Delegation). They compose: every FIELD-governed agent runs FORCE at runtime.
 
 See [ROADMAP.md](ROADMAP.md) for the full picture.
 

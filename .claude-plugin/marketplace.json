@@ -25,7 +25,7 @@
     {
       "name": "field",
       "source": "./plugins/field",
-      "description": "FIELD governance framework — generate, validate, and audit FIELD manifests (Federation / Identity / Enforcement / Ledger / Delegation) for agentic AI via the /field slash command. Design-time governance that wraps the FORCE runtime protocol.",
+      "description": "FIELD governance framework — generate, validate, and audit FIELD manifests (Federated / Identity / Enforcement / Ledger / Delegation) for agentic AI via the /field slash command. Design-time governance that wraps the FORCE runtime protocol.",
       "version": "1.0.0",
       "category": "ai-governance",
       "tags": ["field", "ai-governance", "agentic-ai", "ai-sovereignty", "agent-harnessing", "kill-switch", "delegation", "audit"],

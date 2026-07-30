@@ -8,8 +8,8 @@ agent:
   description: FP&A / audit-adjacent agent producing analysis and deliverables under source discipline
   version: "0.1.0"
 
-# F — Federation. Financial agents are isolated unless a specific integration requires a peer.
-federation:
+# F — Federated. Financial agents are isolated unless a specific integration requires a peer.
+federated:
   isolated: true
   allowed_peers: []
   contracts: []

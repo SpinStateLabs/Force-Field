@@ -71,7 +71,7 @@ Two complementary layers, two plugins, one marketplace.
 ### What v1.0 includes
 
 - `field` plugin with SKILL.md, `framework.md`, the `/field` slash command, and stable user-level state.
-- Five governance letters: **F**ederation · **I**dentity · **E**nforcement · **L**edger · **D**elegation.
+- Five governance letters: **F**ederated · **I**dentity · **E**nforcement · **L**edger · **D**elegation.
 - A per-agent governance manifest (`field-manifest.yaml`) with a JSON Schema that enforces the non-negotiables (kill switch, delegation grantor, identity principal, sealed ledger).
 - Four bootstrap templates: `default`, `financial-agent`, `read-only-agent`, `client-facing-agent`.
 - Composition with FORCE: every FIELD-governed agent declares FORCE as its runtime protocol.
@@ -84,14 +84,14 @@ Runtime and structural constraints on autonomous agents. Kill switches, action b
 ### 2. AI Sovereignty
 Enterprise-level control over AI systems: who owns the agent, what data it can access, what authority it holds, in what jurisdiction it operates. Attribution, authorization, and boundaries of decision rights.
 
-### 3. AI Federation
+### 3. AI Federated Operation
 Rules for multi-agent systems where agents from different organizations, ownership structures, or trust domains must interoperate. Trust protocols, contract semantics, and the equivalent of border controls between agent populations.
 
 ### Letter mapping (committed, v1.0)
 
 | Letter | Word | Pillar served |
 |---|---|---|
-| **F** | Federation | Federation |
+| **F** | Federated | Federated |
 | **I** | Identity | Sovereignty |
 | **E** | Enforcement | Harnessing |
 | **L** | Ledger | Crosscutting (audit / accountability) |
@@ -115,7 +115,7 @@ FIELD **is**:
 
 ### Design decisions (resolved in v1.0)
 
-1. **Letter mapping** — committed: Federation · Identity · Enforcement · Ledger · Delegation.
+1. **Letter mapping** — committed: Federated · Identity · Enforcement · Ledger · Delegation.
 2. **Implementation pattern** — shipped as a Claude Code plugin: the `/field` skill generates, validates, and audits a per-agent governance manifest, with a JSON Schema and four bootstrap templates. Methodology one-pager and reference architectures are the v1.1 follow-on.
 3. **Composition with FORCE** — resolved: every FIELD-governed agent declares FORCE as its `runtime_protocol` in the manifest. Design-time wraps runtime.
 4. **Audit surface** — self-attestation via `/field audit` against a cryptographically sealed ledger declared in the manifest. Third-party certification remains a separate service.
