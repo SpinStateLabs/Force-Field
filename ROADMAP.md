@@ -18,7 +18,7 @@ Two complementary layers, two plugins, one marketplace.
 │   │   individual response.   │    │   owns them, and how     │  │
 │   │                          │    │   they federate.         │  │
 │   │                          │    │                          │  │
-│   │   Status: SHIPPED v1.0   │    │   Status: SCOPED — build │  │
+│   │   Status: SHIPPED v1.0   │    │   Status: SHIPPED v1.0   │  │
 │   └──────────────────────────┘    └──────────────────────────┘  │
 │                                                                   │
 └──────────────────────────────────────────────────────────────────┘
@@ -57,9 +57,24 @@ Two complementary layers, two plugins, one marketplace.
 
 ---
 
-## 🔜 FIELD — Governance layer for agentic AI (target: Q3 2026)
+## ✅ FIELD — Governance layer for agentic AI (v1.0.0, July 2026)
 
 **Not a persona designer. Not a prompt protocol. A governance framework for agentic AI systems.**
+
+### Install
+
+```
+/plugin marketplace add SpinStateLabs/Force-Field
+/plugin install field@force-field
+```
+
+### What v1.0 includes
+
+- `field` plugin with SKILL.md, `framework.md`, the `/field` slash command, and stable user-level state.
+- Five governance letters: **F**ederation · **I**dentity · **E**nforcement · **L**edger · **D**elegation.
+- A per-agent governance manifest (`field-manifest.yaml`) with a JSON Schema that enforces the non-negotiables (kill switch, delegation grantor, identity principal, sealed ledger).
+- Four bootstrap templates: `default`, `financial-agent`, `read-only-agent`, `client-facing-agent`.
+- Composition with FORCE: every FIELD-governed agent declares FORCE as its runtime protocol.
 
 Three pillars:
 
@@ -72,7 +87,7 @@ Enterprise-level control over AI systems: who owns the agent, what data it can a
 ### 3. AI Federation
 Rules for multi-agent systems where agents from different organizations, ownership structures, or trust domains must interoperate. Trust protocols, contract semantics, and the equivalent of border controls between agent populations.
 
-### First-draft letter mapping (subject to founder review)
+### Letter mapping (committed, v1.0)
 
 | Letter | Word | Pillar served |
 |---|---|---|
@@ -81,8 +96,6 @@ Rules for multi-agent systems where agents from different organizations, ownersh
 | **E** | Enforcement | Harnessing |
 | **L** | Ledger | Crosscutting (audit / accountability) |
 | **D** | Delegation | Sovereignty |
-
-Not committed. Final acronym lands when the framework is designed.
 
 ### Why this framing (vs. persona development)
 
@@ -100,32 +113,18 @@ FIELD **is**:
 - Complementary to broad governance frameworks (a company using ISO 42001 can also adopt FIELD)
 - Focused on the specific problem of AI agents acting autonomously on behalf of principals
 
-### Design questions to resolve (before Sprint 2 starts)
+### Design decisions (resolved in v1.0)
 
-1. **Final letter mapping** and word choices for FIELD acronym.
-2. **Implementation pattern.** FIELD is a governance framework — the artifact set may include:
-   - Methodology document / one-pager (definitely)
-   - Assessment tooling (help organizations self-assess FIELD compliance)
-   - Reference architectures for agent harnessing / delegation
-   - Claude Code plugin for template governance manifests? Sub-agent generators?
-   - Certification path (Spin State attests FIELD compliance)
-3. **Composition with FORCE.** Working assumption: FORCE runs *within* FIELD-governed agents. Every FIELD-compliant agent applies FORCE at runtime.
-4. **Audit surface.** How does a third party verify FIELD compliance? Options:
-   - Self-attestation with generated audit log
-   - Cryptographic attestation of governance spec
-   - Third-party assessment (Spin State as auditor)
-5. **Business model.** Open framework? Certified assessment service? Both?
+1. **Letter mapping** — committed: Federation · Identity · Enforcement · Ledger · Delegation.
+2. **Implementation pattern** — shipped as a Claude Code plugin: the `/field` skill generates, validates, and audits a per-agent governance manifest, with a JSON Schema and four bootstrap templates. Methodology one-pager and reference architectures are the v1.1 follow-on.
+3. **Composition with FORCE** — resolved: every FIELD-governed agent declares FORCE as its `runtime_protocol` in the manifest. Design-time wraps runtime.
+4. **Audit surface** — self-attestation via `/field audit` against a cryptographically sealed ledger declared in the manifest. Third-party certification remains a separate service.
 
-### When FIELD ships
+### Still open (post-v1.0)
 
-- A second plugin in this marketplace: `/plugin install field@force-field` (if the tooling shape includes a plugin — TBD in design)
-- Governance framework document at `spinstatelabs.ca/field` (or merged into `/force`)
-- Reference implementations and assessment templates
-- FIELD + FORCE composition patterns documented
-
-### Why this isn't built yet
-
-FORCE earns trust by proving the runtime protocol works in production. FIELD inherits that credibility. Shipping FIELD before FORCE has real-world validation would dilute both. **MEDIUM confidence** the right ordering is FORCE first, then FIELD — based on standard product sequencing logic, not user research.
+- **Business model** — open framework vs. certified assessment service. Both remain on the table.
+- **Runtime enforcement** — v1.0 is a manifest tool. Wiring kill switches, ledger writes, and spend caps to live infrastructure is a v1.1+ question.
+- **Landing page** — `spinstatelabs.ca/field` methodology document and self-assessment.
 
 ---
 
@@ -155,4 +154,4 @@ Not committed. On the radar for after FORCE + FIELD are stable:
 
 ---
 
-*Spin State Labs · Force Field Framework Roadmap v1.1 · Updated June 2026*
+*Spin State Labs · Force Field Framework Roadmap v1.2 · Updated July 2026*

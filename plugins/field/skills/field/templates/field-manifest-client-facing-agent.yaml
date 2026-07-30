@@ -1,0 +1,69 @@
+# FIELD Governance Manifest — CLIENT-FACING-AGENT template
+# For agents that draft outbound communication. Draft-only: a human reviews before anything leaves.
+# No autonomous send. Fill every REPLACE-ME before deploying.  Validate with:  /field validate
+schema_version: field.spinstatelabs.ca/v1
+
+agent:
+  name: REPLACE-ME client-facing agent name
+  description: Drafts outbound client communication. Every send is gated on human review.
+  version: "0.1.0"
+
+# F — Federation. Isolated unless a CRM/mail peer is explicitly contracted.
+federation:
+  isolated: true
+  allowed_peers: []
+  contracts: []
+
+# I — Identity. Client data is sensitive; scope transmission tightly.
+identity:
+  principal: REPLACE-ME principal (e.g. Account Director)
+  org: REPLACE-ME organization
+  jurisdiction:
+    - REPLACE-ME            # e.g. GDPR, PIPEDA
+  data_scope:
+    may_access:
+      - client account context (read)
+    may_retain:
+      - draft communications pending review
+    may_transmit: []        # nothing transmits without human approval
+  model_provider: REPLACE-ME
+
+# E — Enforcement. No autonomous send. Every outbound action escalates to a human first.
+enforcement:
+  kill_switch:
+    endpoint: REPLACE-ME halt endpoint
+    method: REPLACE-ME (e.g. HTTP POST)
+    authorized_operators:
+      - REPLACE-ME account owner
+  irreversible_action_policy: require_human_approval
+  escalation_triggers:
+    - before any outbound send
+    - before any commitment, quote, or promise to a client
+    - any request touching client PII beyond the declared scope
+
+# L — Ledger. Every draft and every approval decision is logged.
+ledger:
+  cryptographic_seal: true
+  seal_algorithm: sha-256-merkle
+  retention_days: 730       # 2 years
+  logged_events:
+    - every draft produced
+    - every human approval or rejection
+    - every escalation
+  store: REPLACE-ME append-only store
+
+# D — Delegation. Draft authority only — sending is never delegated to the agent.
+delegation:
+  granted_by: REPLACE-ME authorizing principal
+  scope:
+    - draft client communications for human review
+  expiry: "2027-01-01"
+  revocation:
+    method: REPLACE-ME
+    endpoint: REPLACE-ME
+
+# Runtime protocol — draft preset (F+C): no flattery, show reasoning, minimal gating for writing.
+runtime_protocol:
+  name: FORCE
+  version: "1.0"
+  preset: draft

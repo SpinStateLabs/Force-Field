@@ -1,0 +1,249 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://field.spinstatelabs.ca/v1/manifest-schema.json",
+  "title": "FIELD Governance Manifest",
+  "description": "Spin State Labs FIELD v1 governance manifest for a single agentic AI deployment. Every FIELD-governed agent carries exactly one manifest. All five sections (Federation, Identity, Enforcement, Ledger, Delegation) are required. Critical-gap rules: no kill switch, no delegation grantor, or an unsealed ledger make a manifest INVALID.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "agent",
+    "federation",
+    "identity",
+    "enforcement",
+    "ledger",
+    "delegation"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "field.spinstatelabs.ca/v1",
+      "description": "Pins the manifest to a FIELD schema version."
+    },
+    "agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1, "description": "Human-readable agent name." },
+        "description": { "type": "string" },
+        "version": { "type": "string" }
+      }
+    },
+
+    "federation": {
+      "type": "object",
+      "description": "F — rules for operating across ownership/trust boundaries.",
+      "additionalProperties": false,
+      "required": ["isolated"],
+      "properties": {
+        "isolated": {
+          "type": "boolean",
+          "description": "true = this agent federates with no external peers. An explicit declaration, never left undeclared."
+        },
+        "allowed_peers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["agent_id", "trust_basis"],
+            "properties": {
+              "agent_id": { "type": "string" },
+              "org": { "type": "string" },
+              "trust_basis": {
+                "type": "string",
+                "description": "How this peer is authenticated/authorized, e.g. mTLS cert, signed capability token, shared registry entry."
+              }
+            }
+          }
+        },
+        "contracts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["peer", "scope"],
+            "properties": {
+              "peer": { "type": "string" },
+              "contract_ref": { "type": "string" },
+              "scope": { "type": "string" }
+            }
+          }
+        }
+      },
+      "if": { "required": ["isolated"], "properties": { "isolated": { "const": false } } },
+      "then": {
+        "required": ["allowed_peers"],
+        "properties": { "allowed_peers": { "type": "array", "minItems": 1 } }
+      }
+    },
+
+    "identity": {
+      "type": "object",
+      "description": "I — attribution and sovereignty. Whose agent this is, under what authority and jurisdiction.",
+      "additionalProperties": false,
+      "required": ["principal"],
+      "properties": {
+        "principal": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The human or organizational principal this agent represents. An agent without a principal is a sovereignty violation."
+        },
+        "org": { "type": "string" },
+        "jurisdiction": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Regulatory regimes governing operation, e.g. SOX, GDPR, PIPEDA, EU-AI-Act."
+        },
+        "data_scope": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "may_access": { "type": "array", "items": { "type": "string" } },
+            "may_retain": { "type": "array", "items": { "type": "string" } },
+            "may_transmit": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "model_provider": {
+          "type": "string",
+          "description": "Underlying model provider (model sovereignty)."
+        }
+      }
+    },
+
+    "enforcement": {
+      "type": "object",
+      "description": "E — the brakes and rails. Runtime constraints that stop the agent leaving its authorized envelope.",
+      "additionalProperties": false,
+      "required": ["kill_switch", "irreversible_action_policy"],
+      "properties": {
+        "kill_switch": {
+          "type": "object",
+          "description": "How a human halts this agent mid-action. Its absence is a critical gap.",
+          "additionalProperties": false,
+          "required": ["endpoint", "method"],
+          "properties": {
+            "endpoint": { "type": "string", "minLength": 1, "description": "Where the halt signal is sent." },
+            "method": { "type": "string", "minLength": 1, "description": "How the halt is triggered, e.g. HTTP POST, signal, queue message." },
+            "authorized_operators": { "type": "array", "items": { "type": "string" } }
+          }
+        },
+        "spend_cap": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["currency", "limit", "period"],
+          "properties": {
+            "currency": { "type": "string" },
+            "limit": { "type": "number", "exclusiveMinimum": 0 },
+            "period": { "type": "string", "description": "e.g. per-run, daily, monthly." },
+            "on_breach": { "type": "string", "description": "Action when the cap is hit, e.g. halt, escalate." }
+          }
+        },
+        "escalation_triggers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Conditions under which the agent stops and defers to a human."
+        },
+        "rate_limits": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["action", "max", "period"],
+            "properties": {
+              "action": { "type": "string" },
+              "max": { "type": "integer", "minimum": 1 },
+              "period": { "type": "string" }
+            }
+          }
+        },
+        "irreversible_action_policy": {
+          "type": "string",
+          "enum": ["forbid", "require_human_approval", "allow_with_ledger"],
+          "description": "How one-way actions (transfers, deletes, sends) are governed."
+        }
+      }
+    },
+
+    "ledger": {
+      "type": "object",
+      "description": "L — the immutable audit trail. Cryptographic sealing is baseline, not optional.",
+      "additionalProperties": false,
+      "required": ["cryptographic_seal", "seal_algorithm", "retention_days", "logged_events"],
+      "properties": {
+        "cryptographic_seal": {
+          "const": true,
+          "description": "MUST be true. An unsealed ledger is a critical gap."
+        },
+        "seal_algorithm": {
+          "type": "string",
+          "enum": ["sha-256-merkle", "blake3-merkle", "ed25519-signed-chain", "sha-512-merkle"],
+          "description": "The tamper-evidence scheme. 'none' is not permitted."
+        },
+        "retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "How long ledger entries are retained. Regulated agents typically require 2555 (7 years)."
+        },
+        "logged_events": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "What is written to the ledger, e.g. every action, every escalation, every delegation use, every spend."
+        },
+        "store": {
+          "type": "string",
+          "description": "Where the ledger lives, e.g. append-only store, WORM bucket, on-chain anchor."
+        }
+      }
+    },
+
+    "delegation": {
+      "type": "object",
+      "description": "D — the authorization chain from a human principal to this autonomous agent.",
+      "additionalProperties": false,
+      "required": ["granted_by", "scope", "expiry"],
+      "properties": {
+        "granted_by": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Who authorized this agent to act. Its absence means the agent has no legitimate authority — a critical gap."
+        },
+        "scope": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" },
+          "description": "The specific actions this agent is authorized to perform."
+        },
+        "expiry": {
+          "type": "string",
+          "pattern": "^\\d{4}-\\d{2}-\\d{2}([T ]\\d{2}:\\d{2}(:\\d{2})?(\\.\\d+)?(Z|[+-]\\d{2}:\\d{2})?)?$",
+          "description": "When the delegation lapses (ISO 8601 date or datetime, e.g. 2027-01-01 or 2027-01-01T00:00:00Z). Standing grants use a far-future date and must be reviewed. Past or near-term expiry is a validator warning."
+        },
+        "revocation": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "method": { "type": "string" },
+            "endpoint": { "type": "string" }
+          }
+        }
+      }
+    },
+
+    "runtime_protocol": {
+      "type": "object",
+      "description": "Recommended: the runtime prompt protocol applied during operation. FIELD wraps FORCE.",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": { "type": "string", "description": "e.g. FORCE." },
+        "version": { "type": "string" },
+        "preset": {
+          "type": "string",
+          "enum": ["analysis", "brainstorm", "draft", "audit"]
+        }
+      }
+    }
+  }
+}

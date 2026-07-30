@@ -1,0 +1,81 @@
+# FIELD Governance Manifest — FINANCIAL-AGENT template
+# For FP&A / audit-adjacent agents. 7-year ledger retention, sealed. Kill switch tied to spend cap.
+# Fill every REPLACE-ME before deploying.  Validate with:  /field validate
+schema_version: field.spinstatelabs.ca/v1
+
+agent:
+  name: REPLACE-ME financial agent name
+  description: FP&A / audit-adjacent agent producing analysis and deliverables under source discipline
+  version: "0.1.0"
+
+# F — Federation. Financial agents are isolated unless a specific integration requires a peer.
+federation:
+  isolated: true
+  allowed_peers: []
+  contracts: []
+
+# I — Identity. Regulated financial work: declare the jurisdictions that govern it.
+identity:
+  principal: REPLACE-ME principal (e.g. Controller, VP Finance)
+  org: REPLACE-ME organization
+  jurisdiction:
+    - SOX
+    - PIPEDA
+  data_scope:
+    may_access:
+      - general ledger (read)
+      - planning models (read)
+    may_retain:
+      - working analysis
+    may_transmit:
+      - approved deliverables to named recipients only
+  model_provider: REPLACE-ME
+
+# E — Enforcement. Kill switch tied to the spend cap; irreversible financial actions require a human.
+enforcement:
+  kill_switch:
+    endpoint: REPLACE-ME halt endpoint
+    method: REPLACE-ME (e.g. HTTP POST)
+    authorized_operators:
+      - REPLACE-ME Controller
+      - REPLACE-ME Head of FP&A
+  spend_cap:
+    currency: USD
+    limit: 500
+    period: daily
+    on_breach: halt        # breaching the cap fires the kill switch
+  irreversible_action_policy: require_human_approval
+  escalation_triggers:
+    - any journal entry or posting
+    - any figure that changes a reported total
+    - any external send
+
+# L — Ledger. 7-year retention for financial audit. Sealed.
+ledger:
+  cryptographic_seal: true
+  seal_algorithm: ed25519-signed-chain
+  retention_days: 2555     # 7 years
+  logged_events:
+    - every action
+    - every source read
+    - every figure produced
+    - every escalation
+    - every spend
+  store: REPLACE-ME append-only / WORM store
+
+# D — Delegation. Narrow, expiring, revocable.
+delegation:
+  granted_by: REPLACE-ME authorizing principal
+  scope:
+    - read financial sources
+    - produce analysis and draft deliverables
+  expiry: "2027-01-01"     # review at least annually
+  revocation:
+    method: REPLACE-ME
+    endpoint: REPLACE-ME
+
+# Runtime protocol — audit preset (F+R+C+E): source-grounding on, objections-first off.
+runtime_protocol:
+  name: FORCE
+  version: "1.0"
+  preset: audit

@@ -9,9 +9,9 @@ Two layers, two plugins, one marketplace:
 | Layer | What it does | Plugin | Status |
 |---|---|---|---|
 | **FORCE** | Runtime prompt protocol. Constrains what an AI *says*. | `force` | ✅ v1.0 shipped |
-| **FIELD** | Design-time persona methodology. Constrains who the AI *is*. | `field` | 🔜 in design |
+| **FIELD** | Design-time governance for agentic AI. Constrains how an agent is *deployed and accountable*. | `field` | ✅ v1.0 shipped |
 
-FORCE neutralizes sycophancy and hallucination on individual responses. FIELD defines the persona — boundaries, identity, escalation rules — that the agent maintains across thousands of interactions. They compose.
+FORCE neutralizes sycophancy and hallucination on individual responses. FIELD governs how an autonomous agent is harnessed, who owns it, and how it federates — captured in a per-agent governance manifest (Federation / Identity / Enforcement / Ledger / Delegation). They compose: every FIELD-governed agent runs FORCE at runtime.
 
 See [ROADMAP.md](ROADMAP.md) for the full picture.
 
@@ -27,10 +27,11 @@ Then install plugins:
 
 ```
 /plugin install force@force-field
+/plugin install field@force-field
 /reload-plugins
 ```
 
-Verify with `/force` — you should see the current FORCE state.
+Verify with `/force` (current FORCE state) and `/field` (current FIELD state).
 
 ## What is FORCE?
 
@@ -51,16 +52,31 @@ Force-Field/
 ├── .claude-plugin/
 │   └── marketplace.json              # Marketplace catalog
 ├── plugins/
-│   └── force/                        # FORCE plugin (v1.0 shipped)
+│   ├── force/                        # FORCE plugin (v1.0 shipped)
+│   │   ├── .claude-plugin/
+│   │   │   └── plugin.json
+│   │   ├── skills/
+│   │   │   └── force/
+│   │   │       ├── SKILL.md
+│   │   │       ├── protocol.md
+│   │   │       └── protocol-defaults.json
+│   │   ├── commands/
+│   │   │   └── force.md
+│   │   └── README.md
+│   └── field/                        # FIELD plugin (v1.0 shipped)
 │       ├── .claude-plugin/
 │       │   └── plugin.json
 │       ├── skills/
-│       │   └── force/
+│       │   └── field/
 │       │       ├── SKILL.md
-│       │       ├── protocol.md
-│       │       └── protocol-defaults.json
+│       │       ├── framework.md
+│       │       ├── manifest-schema.json
+│       │       ├── field-defaults.json
+│       │       └── templates/        # 4 per-agent manifest templates
 │       ├── commands/
-│       │   └── force.md
+│       │   └── field.md
+│       ├── install.ps1 / install.sh
+│       ├── INSTALL.md
 │       └── README.md
 ├── .github/
 │   └── workflows/
@@ -68,11 +84,9 @@ Force-Field/
 ├── LICENSE                           # MIT
 ├── CHANGELOG.md
 ├── CONTRIBUTING.md
-├── ROADMAP.md                        # FORCE shipped, FIELD next
+├── ROADMAP.md                        # FORCE + FIELD shipped
 └── README.md
 ```
-
-FIELD will live at `plugins/field/` when it ships.
 
 ## Development
 

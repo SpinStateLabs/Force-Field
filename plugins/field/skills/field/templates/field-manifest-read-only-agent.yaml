@@ -1,0 +1,67 @@
+# FIELD Governance Manifest — READ-ONLY-AGENT template
+# For retrieval / analysis agents with ZERO write authority. No write delegation. Reduced enforcement surface.
+# Fill every REPLACE-ME before deploying.  Validate with:  /field validate
+schema_version: field.spinstatelabs.ca/v1
+
+agent:
+  name: REPLACE-ME read-only agent name
+  description: Retrieval / analysis agent. Reads and reasons; never writes, sends, or transacts.
+  version: "0.1.0"
+
+# F — Federation. Isolated retrieval agent.
+federation:
+  isolated: true
+  allowed_peers: []
+  contracts: []
+
+# I — Identity. Read scope only — nothing retained externally, nothing transmitted.
+identity:
+  principal: REPLACE-ME principal
+  org: REPLACE-ME organization
+  jurisdiction:
+    - REPLACE-ME
+  data_scope:
+    may_access:
+      - REPLACE-ME read sources
+    may_retain: []          # retains nothing beyond the session
+    may_transmit: []        # transmits nothing
+  model_provider: REPLACE-ME
+
+# E — Enforcement. All one-way actions forbidden outright — the agent is structurally read-only.
+enforcement:
+  kill_switch:
+    endpoint: REPLACE-ME halt endpoint
+    method: REPLACE-ME (e.g. HTTP POST)
+    authorized_operators: []
+  irreversible_action_policy: forbid
+  escalation_triggers:
+    - any request that would require a write, send, or transaction
+
+# L — Ledger. Lighter retention; still sealed. Reads are logged for traceability.
+ledger:
+  cryptographic_seal: true
+  seal_algorithm: sha-256-merkle
+  retention_days: 90
+  logged_events:
+    - every source read
+    - every query
+    - every escalation
+  store: REPLACE-ME append-only store
+
+# D — Delegation. Read authority only. No write action may appear in scope.
+# NOTE: the schema does not machine-enforce scope contents — keeping this read-only is the
+# operator's responsibility. /field validate warns but cannot block a write verb here.
+delegation:
+  granted_by: REPLACE-ME authorizing principal
+  scope:
+    - read and summarize authorized sources
+  expiry: "2027-01-01"
+  revocation:
+    method: REPLACE-ME
+    endpoint: REPLACE-ME
+
+# Runtime protocol — analysis preset (full FORCE).
+runtime_protocol:
+  name: FORCE
+  version: "1.0"
+  preset: analysis

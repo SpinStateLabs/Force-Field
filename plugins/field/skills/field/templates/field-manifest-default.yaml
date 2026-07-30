@@ -1,0 +1,64 @@
+# FIELD Governance Manifest — DEFAULT template
+# One manifest per agent. Fill every REPLACE-ME before deploying.
+# Validate with:  /field validate
+# Schema:         field.spinstatelabs.ca/v1
+schema_version: field.spinstatelabs.ca/v1
+
+agent:
+  name: REPLACE-ME agent name
+  description: REPLACE-ME one line on what this agent does
+  version: "0.1.0"
+
+# F — Federation. Trust across ownership boundaries. Isolated by default.
+federation:
+  isolated: true            # true = no external peers. Set false only if allowed_peers is populated.
+  allowed_peers: []
+  contracts: []
+
+# I — Identity. Whose agent this is, under what authority and jurisdiction.
+identity:
+  principal: REPLACE-ME principal (the person or org this agent represents)
+  org: REPLACE-ME organization
+  jurisdiction:
+    - REPLACE-ME            # e.g. SOX, GDPR, PIPEDA, EU-AI-Act
+  data_scope:
+    may_access: []
+    may_retain: []
+    may_transmit: []
+  model_provider: REPLACE-ME
+
+# E — Enforcement. The brakes and rails. Kill switch is mandatory.
+enforcement:
+  kill_switch:
+    endpoint: REPLACE-ME halt endpoint (where the stop signal goes)
+    method: REPLACE-ME (e.g. HTTP POST, OS signal, queue message)
+    authorized_operators: []
+  irreversible_action_policy: require_human_approval   # forbid | require_human_approval | allow_with_ledger
+  escalation_triggers: []
+
+# L — Ledger. Immutable, cryptographically sealed audit trail.
+ledger:
+  cryptographic_seal: true
+  seal_algorithm: sha-256-merkle
+  retention_days: 365
+  logged_events:
+    - every action
+    - every escalation
+    - every delegation use
+  store: REPLACE-ME ledger store (append-only / WORM)
+
+# D — Delegation. The authorization chain from a human principal.
+delegation:
+  granted_by: REPLACE-ME authorizing principal
+  scope:
+    - REPLACE-ME authorized action
+  expiry: "2027-01-01"
+  revocation:
+    method: REPLACE-ME
+    endpoint: REPLACE-ME
+
+# Runtime protocol — FIELD wraps FORCE. Default preset: analysis (all five FORCE letters).
+runtime_protocol:
+  name: FORCE
+  version: "1.0"
+  preset: analysis
