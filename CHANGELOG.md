@@ -17,6 +17,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
+## field — 1.0.3 / marketplace — 1.1.3 — 2026-08-29
+
+### Added
+
+- `framework.md`: restored the "Full manifest example" (client-facing FP&A analyst agent), ported from the pre-merge apiVersion/kind dialect to the schema_version dialect and validated against `manifest-schema.json` (draft 2020-12). Notable translations: `federation` → `federated` with per-peer `trust_basis` and per-contract scopes; old `sha256-chained` seal → schema-enumerated `sha-256-merkle`; flat rate limits → per-action entries; `scope_forbidden` folded into comments (not a schema field).
+
+### Fixed
+
+- `marketplace.json`: the `field` catalog entry's per-plugin version had been left at 1.0.1 in the 1.1.2 release; now synchronized.
+
+---
+
 ## field — 1.0.2 / marketplace — 1.1.2 — 2026-08-29
 
 ### Changed

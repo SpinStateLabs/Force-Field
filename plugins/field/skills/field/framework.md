@@ -170,4 +170,105 @@ absent, warn but do not fail — some single-purpose agents legitimately omit it
 
 ---
 
+## Full manifest example
+
+A client-facing FP&A analyst agent, fully specified. Validates as **VALID** against
+`manifest-schema.json`.
+
+```yaml
+# FIELD manifest — client-facing FP&A analyst agent
+schema_version: field.spinstatelabs.ca/v1
+
+agent:
+  name: fp-analyst-client-alpha
+  description: FP&A analyst agent producing variance narratives for Client Alpha
+  version: "1.0.0"
+
+# F — Federated. Not isolated: two authenticated peers, each under an explicit contract.
+federated:
+  isolated: false
+  allowed_peers:
+    - agent_id: anthropic.com
+      org: Anthropic
+      trust_basis: mTLS cert
+    - agent_id: netsuite.com
+      org: Oracle NetSuite
+      trust_basis: mTLS cert
+  contracts:
+    - peer: anthropic.com
+      contract_ref: agent-mcp-v1
+      scope: model inference only — no client data retention
+    - peer: netsuite.com
+      contract_ref: agent-mcp-v1
+      scope: variance metadata only — PII and raw documents never cross
+
+identity:
+  principal: don@spinstatelabs.ca
+  org: spin-state-labs
+  jurisdiction:
+    - CA-ON
+  data_scope:
+    may_access:
+      - client-alpha tier-A financial data (read)
+    may_retain:
+      - working analysis
+    may_transmit:
+      - variance metadata          # PII and raw documents are forbidden to cross
+  model_provider: Anthropic
+
+# E — Enforcement. Irreversible actions (posting a JE, emailing externally) need a human.
+enforcement:
+  kill_switch:
+    endpoint: /admin/halt/fp-analyst-client-alpha
+    method: HTTP POST
+  spend_cap:
+    currency: USD
+    limit: 250
+    period: monthly
+    on_breach: halt
+  escalation_triggers:
+    - pii_access
+    - external_send
+    - amount_gt_10000
+  rate_limits:
+    - action: requests
+      max: 30
+      period: per-minute
+    - action: actions
+      max: 100
+      period: per-hour
+  irreversible_action_policy: require_human_approval
+
+ledger:
+  cryptographic_seal: true
+  seal_algorithm: sha-256-merkle
+  retention_days: 2555             # 7 years
+  logged_events:
+    - decisions
+    - actions
+    - delegations
+    - refusals
+    - escalations                  # raw prompts deliberately excluded
+  store: s3://spin-state-audit/prod/client-alpha
+
+# D — Delegation. Granted by the client's CFO; posting JEs and external email stay out of scope.
+delegation:
+  granted_by: cfo@client-alpha.com
+  scope:
+    - read_gl
+    - generate_variance_narrative
+    - email_to_cfo
+  expiry: "2026-12-31T23:59:59Z"
+  revocation:
+    method: HTTP POST
+    endpoint: /admin/revoke/fp-analyst-client-alpha
+
+runtime_protocol:
+  name: FORCE
+  version: "1.0"
+  preset: audit
+```
+
+---
+
 *Spin State Labs · FIELD Framework v1.0 · field.spinstatelabs.ca/v1*
