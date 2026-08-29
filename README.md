@@ -1,8 +1,8 @@
 # Force-Field
 
-Spin State Labs' Claude Code plugin marketplace. The home of the **Force Field Framework** — Spin State's approach to building AI that's defensible in production.
+Spin State Labs' Claude Code plugin marketplace. The home of the **Force Field Protocol** — Spin State's approach to building AI that's defensible in production.
 
-## What's the Force Field Framework?
+## What's the Force Field Protocol?
 
 Two layers, two plugins, one marketplace:
 
@@ -120,4 +120,18 @@ MIT — see [LICENSE](LICENSE).
 
 ## About Spin State Labs
 
-[Spin State Labs](https://spinstatelabs.ca) — a Waterloo-based AI and quantum company. We implement NetSuite Planning & Budgeting, Oracle EPBCS, and build AI-first Planning, Budgeting & Forecasting software. The Force Field Framework is the internal standard we apply to every client deliverable. We share it because the EPM industry needs higher AI hygiene, and frameworks travel faster than they spread by accident.
+[Spin State Labs](https://spinstatelabs.ca) — a Waterloo-based AI and quantum company. We implement NetSuite Planning & Budgeting, Oracle EPBCS, and build AI-first Planning, Budgeting & Forecasting software. The Force Field Protocol is the internal standard we apply to every client deliverable. We share it because the EPM industry needs higher AI hygiene, and frameworks travel faster than they spread by accident.
+
+## The prompt, directly
+
+No install needed — the canonical FORCE system prompt (plus inline variant) is a text file:
+**[docs/FORCE_PROMPT.txt](docs/FORCE_PROMPT.txt)** — paste into custom instructions on Claude, GPT, Gemini, or any capable model.
+
+## Assets
+
+One-pagers (also served from the landing pages):
+
+- FORCE one-pager: [dark](docs/assets/SpinStateLabs_FORCE_OnePager.pdf) · [light](docs/assets/SpinStateLabs_FORCE_OnePager_Light.pdf)
+- FIELD one-pager: [dark](docs/assets/SpinStateLabs_FIELD_OnePager.pdf) · [light](docs/assets/SpinStateLabs_FIELD_OnePager_Light.pdf)
+
+Landing pages: [spinstatelabs.ca/force](https://spinstatelabs.ca/force) · [spinstatelabs.ca/field](https://spinstatelabs.ca/field)

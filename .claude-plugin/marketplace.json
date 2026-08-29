@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "force-field",
   "version": "1.1.1",
-  "description": "Spin State Labs · Claude Code plugin marketplace. AI hygiene, governance, financial planning, and analytical skills for production-grade work.",
+  "description": "Spin State Labs · Claude Code plugin marketplace. The Force Field Protocol: FORCE (runtime prompt protocol) + FIELD (governance layer for agentic AI).",
   "owner": {
     "name": "Spin State Labs",
     "email": "don@spinstatelabs.ca",
@@ -12,7 +12,7 @@
     {
       "name": "force",
       "source": "./plugins/force",
-      "description": "FORCE protocol — toggle Forbid-flattery / Oppose-premise / Reference-sources / Chain-of-thought / Express-uncertainty constraints on or off via the /force slash command.",
+      "description": "FORCE runtime prompt protocol. Toggle Forbid-flattery / Oppose-premise / Reference-sources / Chain-of-thought / Express-uncertainty constraints via the /force slash command.",
       "version": "1.0.1",
       "category": "ai-hygiene",
       "tags": ["force", "anti-sycophancy", "anti-hallucination", "prompt-engineering", "fp-and-a", "audit"],

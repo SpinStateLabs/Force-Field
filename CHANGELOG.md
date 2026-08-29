@@ -11,7 +11,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 ### Planned
 
 - FORCE v1.1 refinements based on real-world usage feedback.
-- FIELD v1.1 refinements: manifest examples per pillar, reference architectures, optional runtime-enforcement hooks.
+- FIELD v1.1 refinements: manifest examples per pillar, reference architectures, optional runtime-enforcement hooks; possible reference implementation of runtime enforcement in n8n.
+- Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
+- FORCE + FIELD runtime composition — automatic FORCE application inside FIELD-declared agents.
+
+---
+
+## marketplace — 1.1.0 — 2026-06-25
+
+### Added
+
+- FIELD plugin (v1.0.0) added to catalog.
+- Marketplace description updated to reflect both FORCE (runtime) and FIELD (governance) layers.
 
 ---
 
@@ -38,6 +49,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 ### Known limitations
 
 - FIELD v1.0 is a manifest tool, not a runtime enforcer. It generates and validates the governance spec; kill switches, ledger writes, and spend caps require infrastructure built around the manifest.
+- Cryptographic sealing is declared in manifests but not implemented by this plugin — the configured ledger store must handle it.
+- FORCE composition is asserted in v1.0 but not automatically wired — runtime application of FORCE alongside a FIELD-governed agent is separate infrastructure.
 - `/field audit` produces an audit-ready report; independent certification is a separate service.
 
 ---
@@ -65,5 +78,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
-[Unreleased]: https://github.com/SpinStateLabs/Force-Field/compare/v1.0.0...HEAD
+[Unreleased]: https://github.com/SpinStateLabs/Force-Field/compare/v1.1.0...HEAD
+[1.1.0]: https://github.com/SpinStateLabs/Force-Field/releases/tag/v1.1.0
 [1.0.0]: https://github.com/SpinStateLabs/Force-Field/releases/tag/v1.0.0
