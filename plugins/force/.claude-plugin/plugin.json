@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "force",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "FORCE protocol from Spin State Labs. Toggle the five constraints (Forbid Flattery, Oppose Premise, Reference Sources, Chain-of-Thought, Express Uncertainty) via the /force slash command. Neutralizes AI sycophancy and hallucination for analytical work.",
   "author": {
     "name": "Don Hagell",
@@ -9,10 +9,7 @@
     "url": "https://spinstatelabs.ca"
   },
   "homepage": "https://spinstatelabs.ca/force",
-  "repository": {
-    "type": "git",
-    "url": "https://github.com/SpinStateLabs/Force-Field"
-  },
+  "repository": "https://github.com/SpinStateLabs/Force-Field",
   "license": "MIT",
   "keywords": [
     "force",
