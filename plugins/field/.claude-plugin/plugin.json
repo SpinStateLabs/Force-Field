@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "field",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "FIELD governance framework from Spin State Labs. Generate, validate, and audit FIELD governance manifests (Federated, Identity, Enforcement, Ledger, Delegation) for agentic AI via the /field slash command. FIELD is design-time governance; FORCE is runtime prompt hygiene. They compose.",
   "author": {
     "name": "Don Hagell",

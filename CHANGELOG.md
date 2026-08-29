@@ -17,6 +17,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
+## field — 1.0.2 / marketplace — 1.1.2 — 2026-08-29
+
+### Changed
+
+- Version bump so `claude plugin update` delivers the reconciled content merged in ef17048: the Federated-dialect FIELD skill (schema_version manifests, `federated` key, updated templates and schema) replaced the pre-merge plugin content, and the obsolete apiVersion/kind-dialect `templates/` directory was removed. No functional change beyond what ef17048 already shipped — 1.0.1 installs predating the merge were stale.
+
+---
+
 ## marketplace — 1.1.0 — 2026-06-25
 
 ### Added

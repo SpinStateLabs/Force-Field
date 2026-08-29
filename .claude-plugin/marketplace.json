@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "force-field",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "Spin State Labs · Claude Code plugin marketplace. The Force Field Protocol: FORCE (runtime prompt protocol) + FIELD (governance layer for agentic AI).",
   "owner": {
     "name": "Spin State Labs",
