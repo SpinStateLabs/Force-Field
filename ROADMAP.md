@@ -18,7 +18,7 @@ Two complementary layers, two plugins, one marketplace. **Both shipped.**
 │   │   individual response.   │    │   owns them, and how     │  │
 │   │                          │    │   they federate.         │  │
 │   │                          │    │                          │  │
-│   │   Status: SHIPPED v1.0   │    │   Status: SHIPPED v1.0   │  │
+│   │   Status: SHIPPED v1.0   │    │   Status: SHIPPED v1.1   │  │
 │   └──────────────────────────┘    └──────────────────────────┘  │
 │                                                                   │
 └──────────────────────────────────────────────────────────────────┘
@@ -102,7 +102,7 @@ Two complementary layers, two plugins, one marketplace. **Both shipped.**
 
 ### What v1.0 is NOT (scope honesty)
 
-- **Not a runtime enforcer.** Generates and validates the governance spec. Actual enforcement (halting agents, deducting from caps, ledger writes) requires infrastructure the user builds around the manifest.
+- **Not a runtime enforcer.** v1.0 generates and validates the governance spec. Runtime enforcement of the E and L letters inside Claude Code arrived with the v1.1 Enforcement Gate (below); estate-level enforcement across many agents is the Conformance Sentinel (What's next).
 - **Not automated certification.** `/field audit` produces an audit-ready report; independent verification is separate.
 - **Not cryptographic sealing.** Declared in manifests; the configured ledger store must implement it.
 
@@ -128,23 +128,51 @@ FIELD **is**:
 ### Still open (post-v1.0)
 
 - **Business model** — open framework vs. certified assessment service. Both remain on the table.
-- **Runtime enforcement** — v1.0 is a manifest tool. Wiring kill switches, ledger writes, and spend caps to live infrastructure is a v1.1+ question.
+- **Runtime enforcement** — resolved for Claude Code in v1.1 (Enforcement Gate: kill switch, protected paths, irreversible-action deny patterns, tool-call budget, hash-chained ledger). Estate-level enforcement across agents and hosts is the Conformance Sentinel, in blocking-mode burn-in since August 2026.
 - **Landing page** — `spinstatelabs.ca/field` methodology document and self-assessment.
+
+---
+
+## ✅ FIELD v1.1 — Enforcement Gate (field 1.1.0 / marketplace 1.2.0, September 12, 2026)
+
+The public commitment in v1.0 was "enforcement in v1.1". v1.1 delivers it inside Claude Code: a `PreToolUse` hook, auto-loaded from `hooks/hooks.json`, that reads `./field-manifest.yaml` and enforces it at runtime.
+
+- **E1 kill switch** — a sentinel file; while it exists every gated tool call is denied.
+- **E2 protected paths** — the manifest, Claude settings, hooks, the ledger and the call counter, plus `enforcement.protected_paths` regexes.
+- **E3 irreversible actions** — `enforcement.irreversible_actions.deny_patterns` on Bash commands, denied outright.
+- **E4 call budget** — a per-session tool-call ceiling (`{action: tool_call, period: session}`) that proxies the spend cap.
+- **L ledger** — every decision appended to the ledger store, sha-256 hash-chained; `hooks/verify-ledger.py` checks the chain.
+- **Fail-closed** — an unreadable manifest, missing PyYAML, a misconfigured kill switch, or an internal error denies with rule `E0`.
+- `/field kill`, `/field resume`, `/field verify`; `/field status` reports whether the gate is armed.
+- Schema changes are additive — every v1.0 manifest stays valid.
+
+### What v1.1 is NOT (scope honesty)
+
+- **Federated, Identity and Delegation remain declared, not enforced.**
+- The spend cap is a tool-call proxy, not metered spend.
+- The ledger hash chain is tamper-evident, not tamper-proof.
+- The gate protects one Claude Code session. Enforcement across an estate of agents — with a semantic judge for natural-language scopes — is the Conformance Sentinel (below).
 
 ---
 
 ## 🔜 What's next
 
-### Force Field Protocol v1.1 (target: Q3 2026)
+### Enforcement Gate v1.2 (next plugin release)
 
-Usage-driven refinements to both FORCE and FIELD based on real-world feedback.
+- **Policy-driven verdicts** — `irreversible_action_policy` → deny / ask / allow-with-ledger.
+- **A locked call counter** and a `kill_switch.local_sentinel` alongside an estate endpoint.
+- **FORCE + FIELD runtime composition** — automatic FORCE application inside FIELD-declared agents.
+- **Ledger reference implementations** — sample stores (s3, Postgres) with cryptographic sealing wired.
+- **Additional FIELD templates** — for agents Spin State clients ask about.
+- **Reference runtime enforcement in n8n** (possible) — a sample workflow that reads a FIELD manifest and applies its constraints outside Claude Code.
 
-Likely additions:
+### Conformance Sentinel — estate-level enforcement (general release target: November 2026)
 
-- **Reference runtime enforcement in n8n** — sample workflow that reads a FIELD manifest and actually applies the constraints
-- **FORCE + FIELD runtime composition** — automatic FORCE application inside FIELD-declared agents
-- **Ledger reference implementations** — sample stores (s3, Postgres) with cryptographic sealing wired
-- **Additional FIELD templates** — for agents Spin State clients ask about
+An enforcement agent that continuously audits deployed agents against their FIELD manifests and blocks non-conforming actions — scope breaches, expired authority, missing ledger writes — at the policy-enforcement point, before they execute. A deterministic policy engine decides structural conformance; a narrowly scoped LLM judge, grounded by retrieval over the estate's manifests, handles natural-language scopes and fails to escalate, never to silent allow.
+
+- **Proof of concept (August 2026, complete)** — 21 days of blocking-mode operation on Spin State's own estate: 136 verdicts, zero false blocks; seeded-violation catch 40/40; kill drill passed.
+- **Pilot (targeted from September 14, 2026)** — a scoped client pilot, conditional on a signed sponsor; continuation gates: false-block rate below 1.6% over 30 consecutive days, no escalation unresolved past 48 hours.
+- **General release (target November 2026)** — injection-corpus pass, pricing, support runbook. The gates, not the calendar, are the go condition.
 
 ### Future plugins under consideration
 
@@ -172,4 +200,4 @@ Not committed. On the radar once FORCE + FIELD have production validation:
 
 ---
 
-*Spin State Labs · Force Field Protocol Roadmap v2.1 · Updated August 2026*
+*Spin State Labs · Force Field Protocol Roadmap v2.2 · Updated September 2026*
