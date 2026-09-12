@@ -214,9 +214,9 @@ When writing `field.json`, always update `last_updated` to the current ISO 8601 
 
 ## Limitations to flag if asked
 
-- FIELD v1.0 is a **manifest tool**, not a runtime enforcer. It generates and validates the governance spec. Actual enforcement (kill switches firing, spend caps triggering, ledger writes) requires infrastructure the user builds around the manifest.
+- FIELD v1.1 is a manifest tool **plus a runtime enforcer inside Claude Code**. The plugin's Enforcement Gate (`hooks/`, a `PreToolUse` hook) enforces Enforcement and Ledger at runtime: E1 kill switch, E2 protected paths, E3 irreversible actions, E4 call budget, and L ledger — as listed in the gate README. The spend cap remains a tool-call proxy (E4 counts tool calls per session; it is not a dollar meter). Federated, Identity and Delegation remain declared, not enforced; outside Claude Code, or with hooks disabled (`--bare`, `disableAllHooks`), enforcement is still infrastructure the user builds around the manifest.
 - Certification is not automated. `/field audit` produces an audit-ready report; independent verification is a separate service.
-- Cryptographic sealing of the ledger is declared in the manifest but not implemented by this skill — the ledger store the user configures must handle it.
+- The gate writes a sha-256 hash-chained ledger and `/field verify` checks it. The hash chain is **tamper-evident, not tamper-proof**: anyone with write access to the ledger file can rewrite the chain. Sealing beyond that (WORM storage, external anchoring) is still the ledger store the user configures.
 - Composition with FORCE is asserted in the manifest but not runtime-wired. Actual application of FORCE at runtime is separate infrastructure.
 
 For the full framework, methodology, and reference architectures, see [spinstatelabs.ca/field](https://spinstatelabs.ca/field).
@@ -234,3 +234,4 @@ For the full framework, methodology, and reference architectures, see [spinstate
 ## Companion command (separate file in the plugin)
 
 - `commands/field.md` — Slash command parser and state mutation logic.
+- `hooks/hooks.json`, `hooks/field-gate.py`, `hooks/verify-ledger.py` — the Enforcement Gate (PreToolUse hook, auto-loaded by the plugin) and its ledger verifier; `hooks/test/` is the smoke test.

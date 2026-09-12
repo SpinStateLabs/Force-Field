@@ -73,7 +73,8 @@ defer, and how much it may spend.
 
 **Manifest fields:** `enforcement.kill_switch{endpoint, method, authorized_operators}`,
 `enforcement.spend_cap`, `enforcement.escalation_triggers[]`, `enforcement.rate_limits[]`,
-`enforcement.irreversible_action_policy`.
+`enforcement.irreversible_action_policy`, `enforcement.irreversible_actions{deny_patterns[]}`,
+`enforcement.protected_paths[]`.
 
 **Rules:**
 - `kill_switch` is mandatory and must specify a reachable `endpoint` and a `method` (how the halt
@@ -84,6 +85,20 @@ defer, and how much it may spend.
   the kill switch (`on_breach: halt`).
 - `escalation_triggers` name the conditions under which the agent stops and defers to a human.
   Be concrete: "any journal entry", "before any outbound send" — not "risky actions".
+- **Runtime enforcement (Claude Code Enforcement Gate, plugin v1.1+).** The gate reads the
+  conventions below; everything else in this section is declared, not enforced:
+  - `kill_switch.method: file` makes `endpoint` a sentinel-file path (relative to the manifest
+    directory); while the file exists every gated tool call is denied (E1). Any other method
+    keeps its meaning for your infrastructure and the gate uses the default sentinel
+    `.claude/state/KILL`.
+  - The `rate_limits` entry `{action: tool_call, max: N, period: session}` is the per-session
+    tool-call budget (E4) — a runtime proxy for `spend_cap`, not a currency meter.
+  - `irreversible_actions.deny_patterns[]` are Python regexes matched against Bash commands;
+    a match is denied outright (E3) **regardless of** `irreversible_action_policy`, which
+    governs everything the patterns do not name.
+  - `protected_paths[]` are Python regexes matched against file-tool paths and Bash command
+    text (E2), in addition to the built-in set (the manifest, `.claude/settings*.json`,
+    `hooks.json`, the ledger, the call counter). Regex matching is a tripwire, not a sandbox.
 
 **Critical gap:** missing `enforcement.kill_switch` (or a kill switch without `endpoint`/`method`)
 → **INVALID**. An agent that cannot be stopped must never be marked valid.
@@ -104,10 +119,14 @@ after the fact: what the agent did, when, under whose authority, at what cost.
 - `cryptographic_seal` MUST be `true`. The schema pins it as a `const`. An unsealed ledger can be
   edited after the fact, which defeats the point.
 - `seal_algorithm` names the tamper-evidence scheme (`sha-256-merkle`, `blake3-merkle`,
-  `ed25519-signed-chain`, `sha-512-merkle`). `none` is not permitted.
+  `ed25519-signed-chain`, `sha-512-merkle`, `sha-256-chain`). `none` is not permitted.
 - `retention_days` is set by jurisdiction. Financial/SOX work is typically 2555 days (7 years).
 - `logged_events` is least-surprise: at minimum every action, every escalation, every delegation
   use, and (if a spend cap exists) every spend.
+- `store` doubles as the Enforcement Gate's ledger location when it is path-like (`file://…`, a
+  path containing a separator, `~/…`, or a bare `*.jsonl`); prose or a bucket/service description
+  keeps its descriptive meaning and the gate falls back to `.claude/state/field-ledger.jsonl`.
+  The gate's chain (`sha-256-chain`) is tamper-evident, not tamper-proof; `/field verify` checks it.
 
 **Critical gap:** `cryptographic_seal` not `true`, or `seal_algorithm` of `none`/absent →
 **INVALID**.

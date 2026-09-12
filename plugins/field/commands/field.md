@@ -44,6 +44,9 @@ Strip the leading `/field` and parse what's left:
 | `export json` / `export yaml` | Print the current manifest in the requested format. No mutation of the file. |
 | `template <name>` | Set `preferred_template` in state to a valid template name. |
 | `reset` | Restore skill defaults: `master=true`, `preferred_template=default`, clear `working_manifest_path`. |
+| `kill` | Trip the Enforcement Gate kill switch: create the sentinel file. Every gated tool call is denied until a human removes it. |
+| `resume` | Report the sentinel path and the shell command a human must run to remove it; confirm once it is gone. The agent cannot remove it (E1 denies the call). No mutation. |
+| `verify` | Run `hooks/verify-ledger.py` against the ledger and print the result. No mutation. |
 | anything else | Show usage help. Do not mutate anything. |
 
 After any state mutation:
@@ -117,6 +120,9 @@ Usage:
   /field export [json|yaml]      print the manifest in a format
   /field template <name>         set the default template
   /field reset                   restore skill defaults
+  /field kill                    trip the kill switch (create the sentinel file)
+  /field resume                  show how a human lifts the kill switch; confirm when lifted
+  /field verify                  check the ledger hash chain (tamper-evident)
 
 Templates:
   default             baseline general use
@@ -147,3 +153,76 @@ validation block. No mutation.
 
 User: `/field xyzzy`
 Action: show usage help. Do not mutate anything.
+
+## Enforcement Gate (v1.1) — `kill`, `resume`, `verify`, and the `status` line
+
+The plugin ships a Claude Code `PreToolUse` hook (`hooks/hooks.json` → `hooks/field-gate.py`) that
+reads `./field-manifest.yaml` and enforces E1 kill switch, E2 protected paths, E3 irreversible
+actions, E4 tool-call budget, and writes a sha-256 hash-chained ledger (L). It is active whenever a
+manifest exists in the project directory. Conventions (full detail in `skills/field/framework.md`):
+
+- Sentinel file: `enforcement.kill_switch.endpoint` when `method` is `file`; otherwise
+  `.claude/state/KILL`. Relative paths resolve against the manifest directory.
+- Ledger file: `ledger.store` when path-like (`file://…`, a path containing a separator, `~/…`, or
+  a bare `*.jsonl`); otherwise `.claude/state/field-ledger.jsonl`.
+- Budget: the `enforcement.rate_limits` entry `{action: tool_call, period: session}`.
+- Gated tools: Bash, Edit, Write, MultiEdit, NotebookEdit. Read, Glob and Grep are not gated.
+
+### `kill` behavior (detail)
+
+1. Load `./field-manifest.yaml`. If it does not exist, report that the gate is not active in this
+   directory and stop.
+2. Resolve the sentinel path (rule above).
+3. Create it (`mkdir -p` the parent directory, then create the empty file) and confirm:
+
+```
+FIELD kill switch TRIPPED — <path>
+  Every Bash / Edit / Write / MultiEdit / NotebookEdit call is now denied (E1)
+  until a human removes the file. Lift it with:  rm <path>
+```
+
+4. Do not attempt further gated tool calls in this session.
+
+### `resume` behavior (detail)
+
+1. Resolve the sentinel path. Check whether it exists with Glob or Read (both are un-gated).
+2. If it exists, the agent cannot remove it — E1 denies every gated call, including the removal.
+   Print, and do nothing else:
+
+```
+FIELD kill switch is TRIPPED — <path>
+  Lift it outside this session:  rm <path>        (PowerShell: Remove-Item <path>)
+  Then run /field resume again to confirm.
+```
+
+3. If it does not exist: `FIELD kill switch is CLEAR — gate enforcing normally.`
+4. No mutation in either case.
+
+### `verify` behavior (detail)
+
+1. Run `python3 "${CLAUDE_PLUGIN_ROOT}/hooks/verify-ledger.py"` with no arguments — it resolves
+   the ledger exactly as the gate does.
+2. Print its output verbatim: `LEDGER INTACT (<n> records, <path>)`, or `LEDGER TAMPERED` with the
+   offending line numbers, or `LEDGER MISSING: <path>`.
+3. State once: the chain is tamper-evident, not tamper-proof — anyone with write access to the
+   ledger file can rewrite it.
+4. No mutation.
+
+### `status` addition
+
+After the state block, append one line:
+
+```
+  Gate: armed (manifest ./field-manifest.yaml · sentinel <path> absent|PRESENT · ledger <path>)
+```
+
+or `  Gate: not armed (no ./field-manifest.yaml in this directory)`.
+
+### Gate interaction with `init` and `assess`
+
+Once `./field-manifest.yaml` exists the gate treats it as a protected path (E2): the agent cannot
+edit it in place, by design — governance changes are made by the human, outside the session. The
+initial `init` write succeeds because no manifest exists yet. When walking F→I→E→L→D after `init`,
+or offering to write `assess` results, write the completed manifest to
+`./field-manifest.draft.yaml` (not protected) and tell the human to move it into place:
+`mv field-manifest.draft.yaml field-manifest.yaml`.

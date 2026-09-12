@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "field",
-  "version": "1.0.3",
-  "description": "FIELD governance framework from Spin State Labs. Generate, validate, and audit FIELD governance manifests (Federated, Identity, Enforcement, Ledger, Delegation) for agentic AI via the /field slash command. FIELD is design-time governance; FORCE is runtime prompt hygiene. They compose.",
+  "version": "1.1.0",
+  "description": "FIELD governance framework from Spin State Labs. Generate, validate, and audit FIELD governance manifests (Federated, Identity, Enforcement, Ledger, Delegation) for agentic AI via the /field slash command. v1.1 adds the Enforcement Gate: a PreToolUse hook that enforces the manifest at runtime (kill switch, protected paths, irreversible-action deny patterns, tool-call budget, hash-chained ledger). FIELD is design-time governance; FORCE is runtime prompt hygiene. They compose.",
   "author": {
     "name": "Don Hagell",
     "email": "don@spinstatelabs.ca",

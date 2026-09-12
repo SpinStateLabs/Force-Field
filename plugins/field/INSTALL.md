@@ -10,7 +10,8 @@ Three ways to install. Pick the one that matches your stack.
 
 All three land the skill at `~/.claude/skills/field/`, the command at `~/.claude/commands/field.md`,
 and seed skill state at `~/.claude/state/field.json`. **State is create-only** — reinstalling never
-overwrites your toggles or last-audit timestamp.
+overwrites your toggles or last-audit timestamp. **Runtime enforcement (the Enforcement Gate) is
+Method A only** — see below.
 
 Per-agent **manifests** are separate: `/field init` writes a `./field-manifest.yaml` into whatever
 project directory you run it from. One manifest per agent.
@@ -38,6 +39,12 @@ That's the whole install. Install FORCE too if you haven't — FIELD wraps it:
 ```
 /plugin install force@force-field
 ```
+
+The **Enforcement Gate** (`hooks/`, a `PreToolUse` hook) is registered only by this method — plugin
+hooks load from the plugin root. Methods B and C install the skill and command only; they do not
+enforce anything. The gate needs `python3` and PyYAML (`pip install pyyaml`) on PATH. On Windows
+make sure `python3` resolves (the Microsoft Store alias or a `python3.exe` shim); if the hook
+command cannot start, Claude Code treats it as a non-blocking error and nothing is enforced.
 
 ---
 
@@ -130,4 +137,4 @@ Commit `field-manifest.yaml` alongside the agent it governs. One manifest per ag
 
 ---
 
-*Spin State Labs · FIELD Skill v1.0 · spinstatelabs.ca/field*
+*Spin State Labs · FIELD Skill v1.1 · spinstatelabs.ca/field*

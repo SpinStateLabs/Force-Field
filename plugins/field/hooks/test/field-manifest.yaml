@@ -1,0 +1,64 @@
+# FIELD Enforcement Gate — test fixture. A schema-valid manifest carrying every key the gate reads.
+# Run:  bash hooks/test/run.sh        (state is written under hooks/test/.claude/, git-ignored)
+schema_version: field.spinstatelabs.ca/v1
+
+agent:
+  name: field-gate-test-agent
+  description: Fixture exercising E1-E4 and the hash-chained ledger
+  version: "1.1.0"
+
+federated:
+  isolated: true
+  allowed_peers: []
+  contracts: []
+
+identity:
+  principal: Gate test operator
+  org: Spin State Labs
+  jurisdiction:
+    - PIPEDA
+  data_scope:
+    may_access: []
+    may_retain: []
+    may_transmit: []
+  model_provider: Anthropic
+
+enforcement:
+  kill_switch:
+    endpoint: .claude/state/KILL       # sentinel file: E1 denies everything while it exists
+    method: file
+    authorized_operators:
+      - Gate test operator
+  irreversible_action_policy: forbid
+  irreversible_actions:                # E3: Bash commands matching these regexes are denied
+    deny_patterns:
+      - '\brm\s+-rf\b'
+      - '\bgit\s+push\s+.*--force'
+      - '\bDROP\s+TABLE\b'
+      - '\bstripe\b.*\bcharges\b'
+  protected_paths: []                  # E2 extras (manifest, ledger, settings are built in)
+  rate_limits:
+    - action: tool_call                # E4: per-session tool-call budget
+      max: 200
+      period: session
+  escalation_triggers: []
+
+ledger:
+  cryptographic_seal: true
+  seal_algorithm: sha-256-chain
+  retention_days: 365
+  logged_events:
+    - every gated tool call
+    - every deny
+  store: .claude/state/field-ledger.jsonl
+
+delegation:
+  granted_by: Gate test operator
+  scope:
+    - run the gate test suite
+  expiry: "2027-01-01"
+
+runtime_protocol:
+  name: FORCE
+  version: "1.0"
+  preset: analysis
