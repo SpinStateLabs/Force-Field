@@ -11,9 +11,45 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 ### Planned
 
 - FORCE v1.1 refinements based on real-world usage feedback.
-- FIELD v1.1 refinements: manifest examples per pillar, reference architectures, optional runtime-enforcement hooks; possible reference implementation of runtime enforcement in n8n.
+- FIELD refinements: manifest examples per pillar, reference architectures; possible reference implementation of runtime enforcement in n8n.
+- Enforcement Gate v1.2: policy-driven verdicts (`irreversible_action_policy` → deny / ask / allow-with-ledger), a locked call counter, a `kill_switch.local_sentinel` alongside an estate endpoint.
 - Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
 - FORCE + FIELD runtime composition — automatic FORCE application inside FIELD-declared agents.
+
+---
+
+## field — 1.1.0 / marketplace — 1.2.0 — 2026-09-12
+
+### Added
+
+- **Enforcement Gate** (`plugins/field/hooks/`): a Claude Code `PreToolUse` hook, auto-loaded from `hooks/hooks.json`, that reads `./field-manifest.yaml` and enforces it at runtime:
+  - E1 kill switch — sentinel file (`enforcement.kill_switch.endpoint` when `method: file`, otherwise `.claude/state/KILL`); while it exists every gated tool call is denied.
+  - E2 protected paths — built-in governance set (the manifest, `.claude/settings*.json`, `hooks.json`, the ledger, the call counter) plus `enforcement.protected_paths` regexes; Edit / Write / MultiEdit / NotebookEdit paths and Bash command text.
+  - E3 irreversible actions — `enforcement.irreversible_actions.deny_patterns` regexes on Bash commands, denied outright regardless of `irreversible_action_policy`.
+  - E4 call budget — the `enforcement.rate_limits` entry `{action: tool_call, period: session}`; a per-session tool-call ceiling that proxies the spend cap.
+  - L ledger — every decision appended to `ledger.store` (when path-like) or `.claude/state/field-ledger.jsonl`, sha-256 hash-chained; `hooks/verify-ledger.py` checks the chain.
+  - Fail-closed: an unreadable manifest, missing PyYAML, a misconfigured file kill switch, or an internal error denies with rule `E0` (exit 2). Without a manifest the hook does nothing.
+- `/field kill`, `/field resume`, `/field verify`; `/field status` reports whether the gate is armed. `hooks/test/` ships a schema-valid fixture and a smoke test (`bash hooks/test/run.sh`).
+- Schema (additive; `schema_version` unchanged, every v1 manifest stays valid): optional `enforcement.irreversible_actions.deny_patterns` and `enforcement.protected_paths`; `seal_algorithm` gains `sha-256-chain`; descriptions document the `file` kill-switch, `tool_call` rate-limit and path-like `ledger.store` conventions. All four templates carry a live `tool_call` budget, the `file` method hint, and commented gate examples.
+
+### Changed
+
+- Limitations rewritten (SKILL.md, README): Enforcement and Ledger are runtime-enforced in Claude Code (E1–E4, L); the spend cap remains a tool-call proxy; the ledger hash chain is tamper-evident, not tamper-proof. Federated, Identity and Delegation remain declared, not enforced.
+- Once a manifest exists the gate treats it as a protected path, so `/field init` / `/field assess` write `field-manifest.draft.yaml` for the human to move into place; `/field resume` is out-of-band by design (the agent cannot remove its own sentinel).
+- INSTALL.md: the gate ships only via the plugin install (Method A); `python3` + PyYAML required.
+
+### Measured (Claude Code 2.1.269, headless `claude -p`, plugin loaded from source)
+
+- In both `bypassPermissions` and `default` modes: Bash `rm -rf /tmp/x` denied (`[E3]`); Edit and Write of `.claude/settings.json` denied (`[E2]`); Edit of `field-manifest.yaml` denied (`[E2]`); every gated call denied while the sentinel exists (`[E1]`) and allowed again once removed. The hook's reason reached the model as the tool error, targets were untouched, and the ledger verified intact after every run.
+- Caveat: Claude Code validates `.claude/settings.json` edits before hooks run — an edit producing invalid settings is rejected by Claude Code itself and never reaches the gate. Either way the file is not modified.
+- E4 was exercised in the model-free layer only.
+
+### Known limitations
+
+- Regex matching is a tripwire, not a sandbox (`/bin/rm`, `python -c`, heredocs evade E3; Bash redirects evade E2's file-tool protection). Read, Glob and Grep are not gated.
+- One `kill_switch` per manifest: an agent registered with an HTTP kill switch keeps it and gets the default local sentinel, not a manifest-chosen one.
+- The per-session call counter is not locked against parallel tool calls.
+- `hooks.json` invokes `python3`; on Windows make sure `python3` resolves, or the hook cannot start and nothing is enforced.
 
 ---
 
@@ -98,6 +134,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
-[Unreleased]: https://github.com/SpinStateLabs/Force-Field/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/SpinStateLabs/Force-Field/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/SpinStateLabs/Force-Field/releases/tag/v1.2.0
 [1.1.0]: https://github.com/SpinStateLabs/Force-Field/releases/tag/v1.1.0
 [1.0.0]: https://github.com/SpinStateLabs/Force-Field/releases/tag/v1.0.0

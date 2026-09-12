@@ -30,11 +30,25 @@ identity:
 # E — Enforcement. The brakes and rails. Kill switch is mandatory.
 enforcement:
   kill_switch:
-    endpoint: REPLACE-ME halt endpoint (where the stop signal goes)
-    method: REPLACE-ME (e.g. HTTP POST, OS signal, queue message)
+    endpoint: REPLACE-ME halt endpoint (where the stop signal goes; a sentinel-file path when method is file)
+    method: REPLACE-ME (e.g. HTTP POST, OS signal, queue message, file)
     authorized_operators: []
   irreversible_action_policy: require_human_approval   # forbid | require_human_approval | allow_with_ledger
   escalation_triggers: []
+  # Claude Code Enforcement Gate (field plugin v1.1+) — the keys below are enforced at runtime.
+  # kill_switch.method: file  -> endpoint is a sentinel-file path; while it exists every gated
+  #   tool call is denied (/field kill creates it). Any other method still gets the default
+  #   sentinel .claude/state/KILL.
+  rate_limits:
+    - action: tool_call        # per-session tool-call budget (runtime proxy for spend_cap)
+      max: 200
+      period: session
+  # irreversible_actions:      # Bash commands matching these Python regexes are denied outright
+  #   deny_patterns:
+  #     - '\brm\s+-rf\b'
+  #     - '\bgit\s+push\s+.*--force'
+  # protected_paths: []        # extra regexes for paths Edit/Write may not touch
+  #                            # (the manifest, ledger and .claude/settings*.json are built in)
 
 # L — Ledger. Immutable, cryptographically sealed audit trail.
 ledger:
@@ -45,7 +59,7 @@ ledger:
     - every action
     - every escalation
     - every delegation use
-  store: REPLACE-ME ledger store (append-only / WORM)
+  store: REPLACE-ME ledger store (e.g. file://./.field/ledger.jsonl for the local gate, or an append-only / WORM store)
 
 # D — Delegation. The authorization chain from a human principal.
 delegation:

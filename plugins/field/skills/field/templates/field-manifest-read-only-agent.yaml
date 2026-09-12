@@ -31,11 +31,25 @@ identity:
 enforcement:
   kill_switch:
     endpoint: REPLACE-ME halt endpoint
-    method: REPLACE-ME (e.g. HTTP POST)
+    method: REPLACE-ME (e.g. HTTP POST, file)
     authorized_operators: []
   irreversible_action_policy: forbid
   escalation_triggers:
     - any request that would require a write, send, or transaction
+  # Claude Code Enforcement Gate (field plugin v1.1+) — the keys below are enforced at runtime.
+  # kill_switch.method: file  -> endpoint is a sentinel-file path; while it exists every gated
+  #   tool call is denied (/field kill creates it). Any other method still gets the default
+  #   sentinel .claude/state/KILL.
+  rate_limits:
+    - action: tool_call        # per-session tool-call budget (runtime proxy for spend_cap)
+      max: 200
+      period: session
+  # irreversible_actions:      # Bash commands matching these Python regexes are denied outright
+  #   deny_patterns:
+  #     - '\brm\s+-rf\b'
+  #     - '\bgit\s+push\s+.*--force'
+  # protected_paths: []        # extra regexes for paths Edit/Write may not touch
+  #                            # (the manifest, ledger and .claude/settings*.json are built in)
 
 # L — Ledger. Lighter retention; still sealed. Reads are logged for traceability.
 ledger:
@@ -46,7 +60,7 @@ ledger:
     - every source read
     - every query
     - every escalation
-  store: REPLACE-ME append-only store
+  store: REPLACE-ME append-only store (or file://./.field/ledger.jsonl for the local gate)
 
 # D — Delegation. Read authority only. No write action may appear in scope.
 # NOTE: the schema does not machine-enforce scope contents — keeping this read-only is the
