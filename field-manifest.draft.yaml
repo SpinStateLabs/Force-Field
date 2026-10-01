@@ -1,0 +1,98 @@
+# FIELD Governance Manifest — plugin-agent (Spin State Labs dogfood)
+# DRAFT. The human principal moves it into place out-of-band:
+#     mv field-manifest.draft.yaml field-manifest.yaml
+# Once field-manifest.yaml exists, the FIELD Enforcement Gate (field plugin >= 1.1) governs every
+# Claude Code session in this repo, and the manifest itself becomes a protected path (E2).
+# Validate with: /field validate field-manifest.draft.yaml
+schema_version: field.spinstatelabs.ca/v1
+
+agent:
+  name: plugin-agent
+  description: Maintains the force, field and force-field plugins in this marketplace and their Anthropic directory submissions — releases, compliance checks, drift checks, status reports. Never pushes, tags or touches the portal on its own.
+  version: "0.1.0"
+
+# F — Federated. No external agent peers.
+federated:
+  isolated: true
+  allowed_peers: []
+  contracts: []
+
+# I — Identity.
+identity:
+  principal: Don Hagell
+  org: Spin State Labs
+  jurisdiction:
+    - Ontario, Canada
+    - PIPEDA
+  data_scope:
+    may_access:
+      - this repository (SpinStateLabs/Force-Field) working tree and git history
+      - public pages on claude.com, code.claude.com, github.com, raw.githubusercontent.com
+      - the claude.ai directory portal, read-only, via the principal's browser when he provides it
+    may_retain:
+      - local ledger and session state under .claude/state/
+    may_transmit: []
+  model_provider: Anthropic (Claude)
+
+# E — Enforcement.
+enforcement:
+  kill_switch:
+    endpoint: .claude/state/KILL
+    method: file
+    authorized_operators:
+      - Don Hagell
+  irreversible_action_policy: require_human_approval
+  escalation_triggers:
+    - any push, tag, release, branch deletion or history rewrite
+    - any submit, publish, withdraw or delist action in the directory portal
+    - any outbound email or message
+    - a directory scan result that fails or adds a new policy hold
+    - any change to LICENSE, CI workflows, or another plugin's name
+  rate_limits:
+    - action: tool_call
+      max: 300
+      period: session
+  irreversible_actions:
+    deny_patterns:
+      - '\bgit\s+push\b'
+      - '\bgit\s+tag\b'
+      - '\bgit\s+reset\s+--hard\b'
+      - '\bgit\s+branch\s+-D\b'
+      - '\bgit\s+filter-(branch|repo)\b'
+      - '\bgit\s+rebase\b'
+      - '\bgh\s+(release|repo|pr\s+merge)\b'
+      - '\bclaude\s+plugin\s+tag\b'
+      - '\brm\s+-[a-zA-Z]*r[a-zA-Z]*f\b|\brm\s+-[a-zA-Z]*f[a-zA-Z]*r\b'
+  protected_paths:
+    - '(^|/)LICENSE$'
+    - '(^|/)\.github/workflows/'
+
+# L — Ledger. Local hash chain written by the gate; verify with plugins/field/hooks/verify-ledger.py.
+ledger:
+  cryptographic_seal: true
+  seal_algorithm: sha-256-chain
+  retention_days: 365
+  logged_events:
+    - every action
+    - every escalation
+    - every delegation use
+  store: .claude/state/field-ledger.jsonl
+
+# D — Delegation.
+delegation:
+  granted_by: Don Hagell
+  scope:
+    - prepare releases of force, field and force-field (version bumps, CHANGELOG, validation, local commit)
+    - run directory compliance and README/code drift checks
+    - report Anthropic directory submission status
+    - draft (not send) messages to directory@anthropic.com for the principal to review
+  expiry: "2026-12-30"
+  revocation:
+    method: file
+    endpoint: .claude/state/KILL
+
+# Runtime protocol — FIELD wraps FORCE.
+runtime_protocol:
+  name: FORCE
+  version: "1.0"
+  preset: audit
