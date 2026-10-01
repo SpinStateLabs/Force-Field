@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-plugin.json",
+  "name": "force-field",
+  "displayName": "Force-Field Protocol",
+  "version": "1.0.0",
+  "description": "Force-Field Protocol umbrella from Spin State Labs. Installs the FORCE runtime prompt protocol and the FIELD governance framework for agentic AI as dependencies, and adds a skill explaining how they compose: FORCE constrains what an agent says at runtime; FIELD constrains how it is deployed and held accountable. Instructions only — this plugin itself runs nothing.",
+  "author": {
+    "name": "Don Hagell",
+    "email": "don@spinstatelabs.ca",
+    "url": "https://spinstatelabs.ca"
+  },
+  "homepage": "https://spinstatelabs.ca",
+  "repository": "https://github.com/SpinStateLabs/Force-Field",
+  "license": "MIT",
+  "keywords": [
+    "force-field",
+    "force",
+    "field",
+    "ai-governance",
+    "agentic-ai",
+    "anti-sycophancy",
+    "anti-hallucination",
+    "audit",
+    "spin-state-labs"
+  ],
+  "dependencies": [
+    "force",
+    "field"
+  ]
+}

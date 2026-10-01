@@ -18,6 +18,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
+## force — 1.0.2 / field — 1.1.1 / force-field — 1.0.0 / marketplace — 1.3.0 — 2026-09-30
+
+### Added
+
+- **`force-field` plugin (1.0.0)** (`plugins/force-field/`): umbrella for the Force-Field Protocol. Declares `force` and `field` as dependencies (Claude Code installs both with it) and adds a `force-field` skill explaining how the two layers compose. Instructions only: no hooks, scripts, MCP servers or network calls. On claude.ai and Cowork, plugin dependencies are not installed automatically; install `force` and `field` separately there.
+- Listing icons for the Anthropic plugin directory: `.claude-plugin/icon.png` (1024×1024 PNG) in `force`, `field` and `force-field`.
+
+### Changed
+
+- `force` 1.0.1 → 1.0.2 and `field` 1.1.0 → 1.1.1: icon only, no functional change. Versions raised so the directory and `claude plugin update` pick up the new commit.
+
+---
+
 ## field — 1.1.0 / marketplace — 1.2.0 — 2026-09-12
 
 ### Added

@@ -4,12 +4,13 @@ Spin State Labs' Claude Code plugin marketplace. The home of the **Force Field P
 
 ## What's the Force Field Protocol?
 
-Two layers, two plugins, one marketplace:
+Two layers, three plugins, one marketplace:
 
 | Layer | What it does | Plugin | Status |
 |---|---|---|---|
 | **FORCE** | Runtime prompt protocol. Constrains what an AI *says*. | `force` | ✅ v1.0 shipped |
 | **FIELD** | Design-time governance for agentic AI. Constrains how an agent is *deployed and accountable*. | `field` | ✅ v1.0 shipped |
+| **Force-Field** | Umbrella: installs both, plus a skill on how they compose. | `force-field` | ✅ v1.0 shipped |
 
 FORCE neutralizes sycophancy and hallucination on individual responses. FIELD governs how an autonomous agent is harnessed, who owns it, and how it federates — captured in a per-agent governance manifest (Federated / Identity / Enforcement / Ledger / Delegation). They compose: every FIELD-governed agent runs FORCE at runtime.
 
@@ -28,6 +29,7 @@ Then install plugins:
 ```
 /plugin install force@force-field
 /plugin install field@force-field
+/plugin install force-field@force-field   # or this one alone: installs force + field as dependencies
 /reload-plugins
 ```
 
