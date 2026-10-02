@@ -93,7 +93,9 @@ defer, and how much it may spend.
     `.claude/state/KILL`.
   - The `rate_limits` entry `{action: tool_call, max: N, period: session}` is the per-session
     tool-call budget (E4) — a runtime proxy for `spend_cap`, not a currency meter.
-  - `irreversible_actions.deny_patterns[]` are Python regexes matched against Bash commands;
+  - Gated tools (1.2+): every tool except Read, Glob, Grep, LS, NotebookRead and TodoWrite,
+    including PowerShell and MCP tools (1.1 gated only Bash and the four file tools).
+  - `irreversible_actions.deny_patterns[]` are Python regexes matched against Bash and PowerShell commands;
     a match is denied outright (E3) **regardless of** `irreversible_action_policy`, which
     governs everything the patterns do not name.
   - `irreversible_actions.session_written_exec: deny` (field 1.2+) denies a Bash command that

@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
 """
-FIELD Enforcement Gate — Claude Code PreToolUse hook (field plugin v1.1).
+FIELD Enforcement Gate — Claude Code PreToolUse hook (field plugin v1.2).
 
 Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project directory
 ($CLAUDE_PROJECT_DIR, else the hook input's cwd, else the process cwd) and enforces:
+  Gated tools: every tool except the read-only UNGATED set (Read, Glob, Grep, LS, NotebookRead,
+  TodoWrite). Shell tools are Bash and PowerShell. MCP and other tools get E1, E2, E4 and L.
   E1  kill switch      -> deny ALL gated tool calls while the sentinel file exists.
                           Sentinel = enforcement.kill_switch.endpoint when method is `file`;
                           otherwise the default .claude/state/KILL.
-  E2  protected paths  -> deny Edit/Write/MultiEdit/NotebookEdit/Bash touching governance files:
+  E2  protected paths  -> deny any gated tool touching governance files (file tools: the target
+                          path; shell tools: the command text; other tools: every string input):
                           the manifest, .claude/settings*.json, hooks.json, the ledger, the call
                           counter, plus every regex in enforcement.protected_paths.
-  E3  irreversible ops -> deny Bash commands matching enforcement.irreversible_actions.deny_patterns
+  E3  irreversible ops -> deny shell commands matching enforcement.irreversible_actions.deny_patterns
                           (Python re.search), independent of irreversible_action_policy.
   E4  call budget      -> deny once the session's gated-call count exceeds `max` of the
                           enforcement.rate_limits entry {action: tool_call, period: session}.
   E5  session-written  -> opt-in (enforcement.irreversible_actions.session_written_exec: deny).
       execution           Deny a Bash command that executes a file this same session was allowed
-                          to write with a file tool (Write/Edit/MultiEdit/NotebookEdit).
+                          to write with a file tool (Write/Edit/MultiEdit/NotebookEdit). PowerShell
+                          is checked conservatively: any command naming such a file is denied.
   L   ledger           -> append a sha-256 hash-chained JSONL record for every decision to
                           ledger.store when it is path-like, else .claude/state/field-ledger.jsonl.
                           File-tool records carry `path`: root-relative inside the project,
@@ -27,7 +31,8 @@ Fail-closed: with a manifest present, an unreadable manifest, missing PyYAML, a 
 kill switch, or any internal error denies with rule E0. Without a manifest the hook does nothing.
 Dependencies: PyYAML (pip install pyyaml). Without it the gate fails closed (E0).
 Limits: regex matching is a tripwire, not a sandbox; the call counter is not locked against
-parallel tool calls; Read/Glob/Grep are not gated (see hooks.json matcher). E5 matches command
+parallel tool calls; Read/Glob/Grep are not gated. E3/E5 only read shell tools: an MCP tool that
+runs commands gets E1/E2/E4/L, not E3/E5. E5 matches command
 text, not process execution: renames, sh -c "$(cat x)", eval and files created by Bash itself
 (echo > x.sh, curl -o) are not caught; paths resolve against the project root, not the shell cwd.
 """
@@ -47,8 +52,12 @@ DEFAULT_KILL = STATE_DIR + "/KILL"
 DEFAULT_LEDGER = STATE_DIR + "/field-ledger.jsonl"
 COUNTER_FILE = STATE_DIR + "/field-session-calls.json"
 FILE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
+SHELL_TOOLS = ("Bash", "PowerShell")
+# Read-only tools the hook passes straight through (no manifest read, no ledger record).
+# Every other tool, including MCP tools, is gated: unknown tools fail toward gating.
+UNGATED = {"Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite"}
 # Built-in governance files: regexes matched against the target path (file tools) or the
-# whole command text (Bash). Backslashes are normalised to '/' before matching.
+# whole command text (shell tools) or every string input (other tools). Backslashes are normalised to '/' before matching.
 BUILTIN_PROTECTED = [r".*field-manifest\.ya?ml$", r".*\.claude/settings.*\.json$", r".*hooks\.json$"]
 BUDGET_ACTIONS = {"tool_call"}
 BUDGET_PERIODS = {"session", "per-session", "per_session"}
@@ -123,7 +132,7 @@ def kill_switch_path(enf, base):
         endpoint = ks.get("endpoint")
         if is_pathlike(endpoint):
             return resolve_path(endpoint, base), "manifest", None
-        return None, None, f"kill_switch.method is 'file' but endpoint {endpoint!r} is not a file path"
+        return None, None, "kill_switch.method is 'file' but endpoint is not a file path"
     return base / DEFAULT_KILL, "default", None
 
 
@@ -259,6 +268,30 @@ def ledger_append(ledger_path, record):
         fh.write(json.dumps(record, sort_keys=True) + "\n")
 
 
+def gate_lock(root):
+    """Exclusive lock held for the rest of this hook process, so parallel tool calls do not race
+    on the call counter or the ledger chain. Released by the OS when the process exits."""
+    path = root / STATE_DIR / "field-gate.lock"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fh = open(path, "a+")
+    if os.name == "nt":
+        import msvcrt
+        fh.seek(0)
+        for _ in range(100):  # LK_LOCK itself retries ~10 times at 1 s; keep trying within the hook timeout
+            try:
+                msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+                break
+            except OSError:
+                import time
+                time.sleep(0.05)
+        else:
+            raise OSError("gate lock busy")
+    else:
+        import fcntl
+        fcntl.flock(fh, fcntl.LOCK_EX)
+    return fh
+
+
 def emit_deny(rule, reason):
     sys.stderr.write(f"FIELD DENY [{rule}]: {reason}\n")
     print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
@@ -276,6 +309,40 @@ def deny(ledger_path, event, rule, reason):
 
 def _norm(value):
     return str(value or "").replace("\\", "/")
+
+
+def string_leaves(value):
+    """Every string inside a tool_input (dict/list values, recursively)."""
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from string_leaves(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from string_leaves(v)
+
+
+PS_TOKEN = re.compile(r"'([^']*)'|\"([^\"]*)\"|([^\s;|&(){}<>,'\"`=]+)")
+
+
+def ps_tokens(cmd):
+    """PowerShell text -> candidate path tokens. Deliberately crude: quoted strings whole, else
+    runs of non-separator characters. E5 checks every one (no read-only allowlist)."""
+    return [a or b or c for a, b, c in PS_TOKEN.findall(cmd or "")]
+
+
+PS_FOLD = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
+                         "\u201c": '"', "\u201d": '"', "\u201e": '"',
+                         "\u2013": "-", "\u2014": "-", "\u2015": "-"})
+
+
+def shell_command(tool, ti):
+    """Command text of a shell tool. PowerShell: every string input, whatever its key."""
+    if tool == "Bash":
+        return str(ti.get("command", "") or "")
+    # PowerShell: fold smart quotes/dashes to ASCII and drop escape backticks (`x -> x).
+    return re.sub(r"`(.)", r"\1", " ".join(string_leaves(ti)).translate(PS_FOLD))
 
 
 def enforce(inp, manifest, root, ledger_path, store_source):
@@ -302,38 +369,46 @@ def enforce(inp, manifest, root, ledger_path, store_source):
     if err:
         deny(ledger_path, event, "E0", f"{err}; fail-closed")
     if flag.exists():
-        deny(ledger_path, event, "E1", f"kill switch tripped ({flag}); all tool calls halted")
+        # path_key, not the raw path: an absolute sentinel path would put a username in the ledger.
+        deny(ledger_path, event, "E1", f"kill switch tripped ({path_key(flag, root)}); all tool calls halted")
 
     # E2 protected governance files: built-ins + resolved ledger/counter + manifest extras.
     counter = root / COUNTER_FILE
-    protected = list(BUILTIN_PROTECTED)
-    for p in (ledger_path, counter):
-        protected.append(re.escape(_norm(p)) + "$")
+    # (regex, label). Labels for the ledger and counter avoid echoing their absolute paths.
+    protected = [(p, p) for p in BUILTIN_PROTECTED]
+    for p, label in ((ledger_path, "the ledger"), (counter, "the call counter")):
+        protected.append((re.escape(_norm(p)) + "$", label))
         try:
-            protected.append(re.escape(_norm(p.relative_to(root))) + "$")
+            protected.append((re.escape(_norm(p.relative_to(root))) + "$", label))
         except ValueError:
             pass
-    protected += [str(p) for p in (enf.get("protected_paths") or [])]
+    protected += [(str(p), str(p)) for p in (enf.get("protected_paths") or [])]
     targets = []
     if tool in FILE_TOOLS:
         targets.append(_norm(ti.get("file_path") or ti.get("notebook_path") or ""))
-    if tool == "Bash":
-        targets.append(_norm(ti.get("command", "")))
+    elif tool in SHELL_TOOLS:
+        targets.append(_norm(shell_command(tool, ti)))
+        if tool == "PowerShell":  # no parser: also check each token (conservative, like E5)
+            targets.extend(_norm(t) for t in ps_tokens(shell_command(tool, ti)))
+    else:  # MCP and other tools: any string input, or any token in one, naming a governance file
+        for v in string_leaves(ti):
+            targets.append(_norm(v).strip())
+            targets.extend(_norm(t) for t in ps_tokens(v))
     for target in targets:
-        for pat in protected:
+        for pat, label in protected:
             if re.search(pat, target):
-                deny(ledger_path, event, "E2", f"write/touch of protected governance path matched '{pat}'")
+                deny(ledger_path, event, "E2", f"write/touch of protected governance path matched '{label}'")
 
-    # E3 irreversible action patterns (Bash command text).
-    if tool == "Bash":
-        cmd = ti.get("command", "") or ""
+    # E3 irreversible action patterns (shell command text).
+    if tool in SHELL_TOOLS:
+        cmd = shell_command(tool, ti)
         pats = (enf.get("irreversible_actions") or {}).get("deny_patterns") or []
         for pat in pats:
-            if re.search(str(pat), cmd):
+            if re.search(str(pat), cmd, re.IGNORECASE if tool == "PowerShell" else 0):
                 deny(ledger_path, event, "E3", f"command matched irreversible-action pattern '{pat}'")
 
     # E5 session-written execution (opt-in): deny running a file this session wrote via a file tool.
-    if tool == "Bash":
+    if tool in SHELL_TOOLS:
         ia = enf.get("irreversible_actions") or {}
         if not isinstance(ia, dict):
             deny(ledger_path, event, "E0", "irreversible_actions is not a mapping; fail-closed")
@@ -354,7 +429,12 @@ def enforce(inp, manifest, root, ledger_path, store_source):
             except (OSError, ValueError) as exc:
                 deny(ledger_path, event, "E0", f"ledger unreadable for E5 ({exc.__class__.__name__}); fail-closed")
             try:
-                toks = exec_suspect_tokens(str(ti.get("command", "") or ""))
+                if tool == "Bash":
+                    toks = exec_suspect_tokens(shell_command(tool, ti))
+                else:  # PowerShell: no parser, so every token counts (over-blocks reads; safe side)
+                    toks = ps_tokens(shell_command(tool, ti))
+                    # $PWD/x.sh, -FilePath:x.sh: also try the text after the last ':' or '$var/'.
+                    toks += [re.sub(r"^.*(?::|\$[^/]*/)", "", _norm(t)) for t in toks]
             except ValueError:
                 deny(ledger_path, event, "E0", "command could not be tokenised for E5; fail-closed")
             for tok in toks:
@@ -373,7 +453,9 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         n = counts.get(session, 0) + 1
         counts[session] = n
         counter.parent.mkdir(parents=True, exist_ok=True)
-        counter.write_text(json.dumps(counts), encoding="utf-8")
+        tmp = counter.with_name(counter.name + ".tmp")
+        tmp.write_text(json.dumps(counts), encoding="utf-8")
+        os.replace(tmp, counter)  # atomic: a parallel reader never sees a truncated file
         if n > budget:
             deny(ledger_path, event, "E4", f"session tool-call budget {budget} exceeded (call #{n})")
 
@@ -389,6 +471,10 @@ def main():
             inp, bad_input = {}, True
     except Exception:
         inp, bad_input = {}, True
+    if not bad_input and not isinstance(inp.get("tool_name", ""), str):
+        bad_input = True
+    if not bad_input and inp.get("tool_name") in UNGATED:
+        sys.exit(0)  # read-only tool: not gated
     root = project_root(inp)
     manifest = load_manifest(manifest_path(root))
     if manifest is None:
@@ -397,9 +483,12 @@ def main():
         emit_deny("E0", "hook input is not a JSON object; fail-closed")
     ledger_path, store_source = resolve_store(manifest, root)
     try:
+        _lock = gate_lock(root)  # noqa: F841  (held until exit)
         enforce(inp, manifest, root, ledger_path, store_source)
     except SystemExit:
         raise
+    except OSError as exc:  # strerror only: str(exc) carries the file path
+        emit_deny("E0", f"gate internal error ({exc.__class__.__name__}: {exc.strerror or 'I/O error'}); fail-closed")
     except Exception as exc:
         emit_deny("E0", f"gate internal error ({exc.__class__.__name__}: {exc}); fail-closed")
 

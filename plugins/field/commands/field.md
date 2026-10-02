@@ -169,7 +169,8 @@ manifest exists in the project directory. Conventions (full detail in `skills/fi
 - Budget: the `enforcement.rate_limits` entry `{action: tool_call, period: session}`.
 - E5: `enforcement.irreversible_actions.session_written_exec: deny` denies Bash commands that name a
   file the same session wrote (read-only tools excepted); `session_written_exec_allow` regexes exempt root-relative paths.
-- Gated tools: Bash, Edit, Write, MultiEdit, NotebookEdit. Read, Glob and Grep are not gated.
+- Gated tools (1.2+): every tool except Read, Glob, Grep, LS, NotebookRead and TodoWrite, including
+  PowerShell and MCP tools. E3 and E5 apply to Bash and PowerShell; E1, E2, E4 and L to every gated tool.
 
 ### `kill` behavior (detail)
 

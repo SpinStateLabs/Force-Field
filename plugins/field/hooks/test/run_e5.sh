@@ -66,6 +66,59 @@ case "$(uname -s)" in
   *) m=$(stat -c %a .claude/state/field-ledger.jsonl 2>/dev/null || stat -f %Lp .claude/state/field-ledger.jsonl)
      [ "$m" = "600" ] && echo "PASS  new ledger is 0600" || { echo "FAIL  ledger mode $m"; fail=1; };;
 esac
+# ---- all-tools coverage (field 1.2): PowerShell, MCP and other tools ----
+pj() { python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "$1"; }
+for c in 'bash x.sh' '& .\x.sh' 'python3 x.py' 'Start-Process bash -ArgumentList x.sh' 'Get-Content x.sh | iex' 'Get-Content x.sh'; do
+  expect "PowerShell E5 deny: $c" 2 "$(call t1 PowerShell "$(pj "$c")")"
+done
+for c in 'Get-ChildItem' 'bash approved/ok.sh' 'Write-Output hi'; do
+  expect "PowerShell allow: $c" 0 "$(call t1 PowerShell "$(pj "$c")")"
+done
+expect "PowerShell: other session may run t1's file" 0 "$(call t2 PowerShell '{"command":"bash x.sh"}')"
+expect "PowerShell E3: Remove-Item -Recurse"     2 "$(call t1 PowerShell '{"command":"Remove-Item -Recurse -Force build"}')"
+expect "PowerShell E3: rm -rf via bash"          2 "$(call t1 PowerShell '{"command":"bash -c \"rm -rf build\""}')"
+expect "PowerShell E2: edit manifest"            2 "$(call t1 PowerShell '{"command":"Set-Content field-manifest.yaml x"}')"
+expect "PowerShell: command under another key"   2 "$(call t1 PowerShell '{"script":"bash x.sh"}')"
+expect "MCP E2: write manifest"                  2 "$(call t1 mcp__fs__write_file '{"path":"field-manifest.yaml","content":"x"}')"
+expect "MCP E2: nested input"                    2 "$(call t1 mcp__fs__edit '{"edits":[{"path":".claude/settings.json"}]}')"
+# PowerShell evasions from the all-tools review
+for c in 'bash x`.sh' "bash ‘x.sh’" 'bash “x.sh”' '& $PWD/x.sh' '& "$PWD\x.sh"' 'Start-Process -FilePath:x.sh'; do
+  expect "PowerShell E5 deny (review): $c" 2 "$(call t1 PowerShell "$(pj "$c")")"
+done
+for c in 'Re`move-Item -Recurse build' 'Remove-Item –Recurse build' 'RM -RF build'; do
+  expect "PowerShell E3 deny (review): $c" 2 "$(call t1 PowerShell "$(pj "$c")")"
+done
+expect "MCP E2: manifest mid-string"             2 "$(call t1 mcp__dc__start_process '{"command":"echo x > field-manifest.yaml; true"}')"
+expect "MCP E2: trailing space"                  2 "$(call t1 mcp__fs__write_file '{"path":"./field-manifest.yaml ","content":"x"}')"
+r=$(printf '{"session_id":"t1","tool_name":["Bash"],"tool_input":{}}' | python3 "$G" >/dev/null 2>&1; echo $?); expect "non-string tool_name -> E0 deny" 2 "$r"
+expect "MCP allow: ordinary call"                0 "$(call t1 mcp__fs__write_file '{"path":"notes.txt","content":"x"}')"
+grep -q '"tool": "mcp__fs__write_file"' .claude/state/field-ledger.jsonl && echo "PASS  MCP calls are ledgered" || { echo "FAIL  MCP call not ledgered"; fail=1; }
+n0=$(wc -l < .claude/state/field-ledger.jsonl)
+expect "Read is ungated"                         0 "$(call t1 Read '{"file_path":"field-manifest.yaml"}')"
+[ "$(wc -l < .claude/state/field-ledger.jsonl)" = "$n0" ] && echo "PASS  ungated Read leaves no ledger record" || { echo "FAIL  Read was ledgered"; fail=1; }
+mkdir -p .claude/state && touch .claude/state/KILL
+expect "E1 kill: PowerShell denied"              2 "$(call t1 PowerShell '{"command":"Get-ChildItem"}')"
+expect "E1 kill: MCP tool denied"                2 "$(call t1 mcp__fs__write_file '{"path":"notes.txt","content":"x"}')"
+expect "E1 kill: WebFetch denied"                2 "$(call t1 WebFetch '{"url":"https://example.com","prompt":"x"}')"
+expect "E1 kill: Read still ungated"             0 "$(call t1 Read '{"file_path":"x.sh"}')"
+out=$(printf '{"session_id":"t1","tool_name":"Bash","tool_input":{"command":"ls"}}' | python3 "$G" 2>&1 >/dev/null)
+case "${out,,}" in *"(.claude/state/kill)"*) echo "PASS  E1 reason names the root-relative sentinel";; *) echo "FAIL  E1 reason: $out"; fail=1;; esac
+rm .claude/state/KILL
+expect "E2: absolute ledger path via MCP"      2 "$(call t1 mcp__fs__write_file '{"path":"'"$(abspath "$HERE")"'/.claude/state/field-ledger.jsonl","content":"x"}')"
+python3 - "$HERE" "$(abspath "$HERE")" <<'PY2'
+import json,sys
+roots=[r for r in sys.argv[1:] if r]
+blob=open(".claude/state/field-ledger.jsonl").read().replace("\\\\","/").casefold()
+bad=[r for r in roots if r.casefold() in blob]
+print(("FAIL" if bad else "PASS")+"  no absolute project path anywhere in the ledger (incl. E1 reasons)"); sys.exit(1 if bad else 0)
+PY2
+[ $? -eq 0 ] || fail=1
+# parallel calls: no false E0, every call ledgered, chain intact
+n0=$(wc -l < .claude/state/field-ledger.jsonl)
+for i in $(seq 1 30); do printf '{"session_id":"p1","tool_name":"mcp__x__y","tool_input":{"i":%s}}' "$i" | python3 "$G" >/dev/null 2>&1 & done; wait
+n1=$(wc -l < .claude/state/field-ledger.jsonl)
+[ $((n1-n0)) -eq 30 ] && echo "PASS  30 parallel calls ledgered" || { echo "FAIL  parallel calls ledgered: $((n1-n0))/30"; fail=1; }
+grep -q '"session": "p1".*"decision": "deny"\|"decision": "deny".*"session": "p1"' .claude/state/field-ledger.jsonl && { echo "FAIL  parallel call denied"; fail=1; } || echo "PASS  no parallel call denied"
 python3 "$V" >/dev/null && echo "PASS  ledger intact" || { echo "FAIL  ledger tampered"; fail=1; }
 # fail-closed: corrupt ledger line -> E0 on Bash
 echo 'not json' >> .claude/state/field-ledger.jsonl

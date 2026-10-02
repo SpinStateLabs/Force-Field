@@ -111,7 +111,7 @@ runtime_protocol:
 
 Install both: `/plugin install force@force-field` and `/plugin install field@force-field`.
 
-## Runtime enforcement (v1.1)
+## Runtime enforcement (v1.1+)
 
 The plugin ships an **Enforcement Gate**: a Claude Code `PreToolUse` hook (`hooks/`) that reads
 `./field-manifest.yaml` and enforces it while you work.
@@ -120,12 +120,15 @@ The plugin ships an **Enforcement Gate**: a Claude Code `PreToolUse` hook (`hook
 |---|---|---|
 | E1 kill switch | `enforcement.kill_switch.endpoint` with `method: file` (else `.claude/state/KILL`) | sentinel file present → every gated tool call denied |
 | E2 protected paths | built-in set + `enforcement.protected_paths` (regexes) | edits/commands touching the manifest, `.claude/settings*.json`, `hooks.json`, the ledger denied |
-| E3 irreversible actions | `enforcement.irreversible_actions.deny_patterns` (regexes) | matching Bash commands denied |
+| E3 irreversible actions | `enforcement.irreversible_actions.deny_patterns` (regexes) | matching Bash or PowerShell commands denied |
 | E4 call budget | `enforcement.rate_limits` entry `{action: tool_call, period: session}` | per-session tool-call ceiling (a proxy, not a dollar spend cap) |
 | E5 session-written execution (opt-in, 1.2+) | `enforcement.irreversible_actions.session_written_exec: deny` (+ `session_written_exec_allow` regexes) | a Bash command that names a file this session wrote with a file tool is denied, unless it is a read-only tool (`cat`, `ls`, `git`, ...); covers `bash x.sh`, `./x.sh`, `python3 x.py`, `cat x.sh \| bash`, `-c` strings, wrappers like `sudo` |
 | L ledger | `ledger.store` when path-like, else `.claude/state/field-ledger.jsonl` | every decision appended, sha-256 hash-chained; `/field verify` checks it. File-tool records carry `path`: root-relative inside the project, `sha256:<hex>` outside it |
 
-Gated tools: Bash, Edit, Write, MultiEdit, NotebookEdit. Requires `python3` and PyYAML on PATH;
+Gated tools (1.2+): every tool except Read, Glob, Grep, LS, NotebookRead and TodoWrite, including
+PowerShell and MCP tools. E1, E2, E4 and L apply to all of them; E3 and E5 read shell commands (Bash and
+PowerShell). PowerShell has no parser, so E5 denies any PowerShell command that names a written file,
+reads included. In 1.1 only Bash, Edit, Write, MultiEdit and NotebookEdit were gated. Requires `python3` and PyYAML on PATH;
 without PyYAML the gate fails closed. The gate loads only with the plugin install (Method A);
 `--bare` and `disableAllHooks` turn it off. Once a manifest exists the agent cannot edit it —
 governance changes are made by the human, outside the session.

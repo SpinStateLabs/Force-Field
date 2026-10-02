@@ -25,10 +25,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 - **E5 session-written execution** (opt-in): with `enforcement.irreversible_actions.session_written_exec: deny`, the Enforcement Gate denies a Bash command that names a file the same session was allowed to write with a file tool (Write, Edit, MultiEdit, NotebookEdit), unless the command is one of a short list of read-only tools (`cat`, `ls`, `head`, `tail`, `less`, `more`, `wc`, `grep`, `rg`, `diff`, `stat`, `file`, `git`, `sha256sum`, `md5sum`, `chmod`, `echo`, `printf`, `test`). If a shell, interpreter or wrapper (`sudo`, `env`, `nohup`, `exec`, ...) appears anywhere in the command, every token is checked, which covers pipes (`cat x.sh | bash`), redirects (`bash < x.sh`), `-c` strings, subshells, `$(...)` and backticks. `session_written_exec_allow[]` regexes exempt root-relative paths (e.g. `'^approved/'`). Default `allow`: manifests without the key behave exactly as in 1.1.
 - **Ledger write paths**: file-tool records now carry `path`. Inside the project it is the root-relative path; outside it is `sha256:<hex>` of the normalised absolute path. E5 deny reasons name the same key, never the raw command token.
 - Schema (additive; `schema_version` unchanged): optional `session_written_exec` (`allow` | `deny`) and `session_written_exec_allow[]` under `enforcement.irreversible_actions`. Templates carry them as commented examples; the test fixture enables them.
-- `hooks/test/run_e5.sh` (70 cases) and a CI job that runs it with the existing smoke test.
+- **All-tools gating**: the hook matcher is now `*`. Every tool except Read, Glob, Grep, LS, NotebookRead and TodoWrite is gated, including Claude Code's PowerShell tool on Windows and MCP tools. E1 kill switch, E4 budget and L ledger apply to all of them. E2 checks every string in an MCP tool's input. E3 and E5 apply to PowerShell commands as well as Bash; PowerShell has no parser, so E5 denies any PowerShell command that names a session-written file (reads included) and E2 checks each token. PowerShell text is normalised first (smart quotes and dashes to ASCII, escape backticks removed) and E3 matches it case-insensitively.
+- Templates carry a commented PowerShell deny pattern (`Remove-Item ... -Recurse`).
+- `hooks/test/run_e5.sh` (111 cases) and a CI job that runs it with the existing smoke test.
 
 ### Changed
 
+- The gate takes an exclusive lock (`.claude/state/field-gate.lock`) for each call and writes the call counter atomically. Without it, parallel tool calls raced on the counter and the ledger: in a 40-call test, 28 were falsely denied with `E0` and left no ledger record. This was latent in 1.1; gating every tool made it common.
+- Hook input whose `tool_name` is not a string denies with `E0` (it exited 1, which Claude Code treats as non-blocking). `E0` reasons for I/O errors name the error, not the file.
+- E4 now counts every gated tool, MCP tools included, so a budget is used up faster than in 1.1. Raise `max` if needed.
+- E1 and E2 deny reasons no longer contain absolute paths: E1 names the sentinel by its ledger key, and E2 names the ledger and call counter by label. E0 reasons no longer echo the kill-switch endpoint.
 - New ledger files are created owner-only (0600) on POSIX; existing ledgers keep their permissions; no effect on Windows.
 - Fail-closed fix (all rules, not only E5): with a manifest present, hook input that is not a JSON object now denies with `E0`. In 1.1 it was treated as an empty call and allowed. Claude Code always sends valid JSON, so this only matters if something else invokes the hook.
 - Fail-closed extended: with E5 enabled, an unreadable ledger, an invalid `session_written_exec` value, a non-list or invalid `session_written_exec_allow`, or a command that cannot be tokenised denies with `E0`. E0 reasons name the exception class only, not file paths.
@@ -37,6 +43,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 ### Why
 
 - Write-then-execute got past E3: an agent writes `cleanup.sh`, then runs `bash ./cleanup.sh`, which matches no deny pattern. Raised in public review of the 1.1 launch by Ridzwan Gigih Herdyantha, who also proposed the approach used here: have the ledger record the write path so Enforcement can answer "did this session create this file" with no new state (L feeding E).
+- A live test in Claude Code 2.1.220 on Windows found that the PowerShell tool was not gated at all (1.1 and the first 1.2 draft): a command denied through Bash ran through PowerShell, with no ledger record, and the kill switch did not stop it. The all-tools change closes that.
+- A second adversarial review of the all-tools change found PowerShell evasions (backtick escapes, smart quotes, en-dashes, `-Param:value`, `$PWD/x.sh`, upper-case `RM -RF`), E2 misses on MCP strings that did not end in the protected path, the parallel-call race, and a non-string `tool_name` that did not fail closed. All are fixed and covered by tests.
 - A pre-merge adversarial review found eight issues in the first E5 draft (flag arguments hiding the script, quoted names, pipes/redirects/subshells, path-key mismatches on Windows and symlinked roots, a string exemption that exempted everything, a path in an E0 reason, `~` handling, a test-script platform check). All are fixed and covered by tests.
 
 ### Known limitations
@@ -51,12 +59,15 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 - Records written by field 1.1.x carry no path, so writes made before the upgrade are not tracked.
 - `sha256:` keys are unsalted: they keep plaintext out of the ledger but a guessed path can be confirmed against them.
 - Deleting ledger lines hides a write from E5; `/field verify` detects the broken chain.
-- Unchanged from 1.1: E1 and E2 deny reasons can include the absolute path of the kill-switch sentinel or the ledger.
+- MCP tools that run commands (for example a desktop shell server) get E1, E2, E4 and L, not E3 or E5: the gate cannot tell which input is a command.
+- PowerShell checks are token-based, not parsed: string building (`"x" + ".sh"`), wildcards (`x.s?`), `-EncodedCommand`, variables, aliases and parameter abbreviations (`rm -r -fo`) get past E3 and E5. E5 over-blocks reads such as `Get-Content x.sh`, and any PowerShell input string (the description included) is checked.
+- E2 on MCP tools checks every token of every input string, so an MCP call whose text merely mentions a governance file name (`hooks.json`) is denied (the safe direction).
+- Read, Glob and Grep remain ungated, including while the kill switch is set.
 - The ledger is read on every Bash call while E5 is on (linear in ledger size).
 
 ### Measured
 
-- `bash hooks/test/run_e5.sh`: 70/70 pass; `bash hooks/test/run.sh`: unchanged (allow / E3 / E2 / E1, ledger intact). With E5 off, 16 edge-case inputs give identical exit codes, output and ledger records to 1.1.1 apart from the new `path` field (malformed hook input aside, which now denies). Python 3.12 on Linux, and Python 3.13 under Git Bash on Windows 11. Not yet run in a live Claude Code session.
+- `bash hooks/test/run_e5.sh`: 111/111 pass; `bash hooks/test/run.sh`: unchanged (allow / E3 / E2 / E1, ledger intact). With E5 off, 16 edge-case inputs give identical exit codes, output and ledger records to 1.1.1 apart from the new `path` field (malformed hook input aside, which now denies). Python 3.12 on Linux, and Python 3.13 under Git Bash on Windows 11. Live, headless Claude Code 2.1.220 on Windows 11 (`--plugin-dir`, `bypassPermissions` and `default` modes) on the pre-all-tools build: E3, E5 (7 commands), E2, exemption, ledger paths and verify all as expected; the PowerShell gap above was found there. The all-tools build has not yet been run live.
 
 ---
 
