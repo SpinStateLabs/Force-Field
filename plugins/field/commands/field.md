@@ -158,7 +158,8 @@ Action: show usage help. Do not mutate anything.
 
 The plugin ships a Claude Code `PreToolUse` hook (`hooks/hooks.json` → `hooks/field-gate.py`) that
 reads `./field-manifest.yaml` and enforces E1 kill switch, E2 protected paths, E3 irreversible
-actions, E4 tool-call budget, and writes a sha-256 hash-chained ledger (L). It is active whenever a
+actions, E4 tool-call budget, opt-in E5 session-written execution (1.2+), and writes a sha-256
+hash-chained ledger (L). It is active whenever a
 manifest exists in the project directory. Conventions (full detail in `skills/field/framework.md`):
 
 - Sentinel file: `enforcement.kill_switch.endpoint` when `method` is `file`; otherwise
@@ -166,7 +167,10 @@ manifest exists in the project directory. Conventions (full detail in `skills/fi
 - Ledger file: `ledger.store` when path-like (`file://…`, a path containing a separator, `~/…`, or
   a bare `*.jsonl`); otherwise `.claude/state/field-ledger.jsonl`.
 - Budget: the `enforcement.rate_limits` entry `{action: tool_call, period: session}`.
-- Gated tools: Bash, Edit, Write, MultiEdit, NotebookEdit. Read, Glob and Grep are not gated.
+- E5: `enforcement.irreversible_actions.session_written_exec: deny` denies Bash commands that name a
+  file the same session wrote (read-only tools excepted); `session_written_exec_allow` regexes exempt root-relative paths.
+- Gated tools (1.2+): every tool except Read, Glob, Grep, LS, NotebookRead and TodoWrite, including
+  PowerShell and MCP tools. E3 and E5 apply to Bash and PowerShell; E1, E2, E4 and L to every gated tool.
 
 ### `kill` behavior (detail)
 

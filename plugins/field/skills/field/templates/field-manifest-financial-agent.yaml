@@ -61,6 +61,9 @@ enforcement:
   #   deny_patterns:
   #     - '\brm\s+-rf\b'
   #     - '\bgit\s+push\s+.*--force'
+  #     - '(?i)\bRemove-Item\b.*-Recurse'   # PowerShell (Windows)
+  #   session_written_exec: deny   # E5: deny running a file this session wrote (field 1.2+)
+  #   session_written_exec_allow: ['^approved/']
   # protected_paths: []        # extra regexes for paths Edit/Write may not touch
   #                            # (the manifest, ledger and .claude/settings*.json are built in)
 

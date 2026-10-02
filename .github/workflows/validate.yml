@@ -89,3 +89,23 @@ jobs:
             head -n 5 "$cmd_file" | grep -q "^description:" || (echo "$cmd_file missing 'description' in frontmatter" && exit 1)
             echo "  OK"
           done
+
+  gate-tests:
+    name: FIELD Enforcement Gate tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install PyYAML
+        run: pip install pyyaml
+      - name: Smoke test (E1-E4, L)
+        run: |
+          out=$(bash plugins/field/hooks/test/run.sh)
+          echo "$out"
+          echo "$out" | grep -q "LEDGER INTACT"
+      - name: E5 and ledger-path tests
+        run: bash plugins/field/hooks/test/run_e5.sh

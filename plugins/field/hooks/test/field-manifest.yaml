@@ -4,8 +4,8 @@ schema_version: field.spinstatelabs.ca/v1
 
 agent:
   name: field-gate-test-agent
-  description: Fixture exercising E1-E4 and the hash-chained ledger
-  version: "1.1.0"
+  description: Fixture exercising E1-E5 and the hash-chained ledger
+  version: "1.2.0"
 
 federated:
   isolated: true
@@ -36,6 +36,11 @@ enforcement:
       - '\bgit\s+push\s+.*--force'
       - '\bDROP\s+TABLE\b'
       - '\bstripe\b.*\bcharges\b'
+      - '(?i)\bRemove-Item\b.*-Recurse'   # PowerShell equivalent of rm -rf
+      - '(?i)\bFormat-Volume\b'
+    session_written_exec: deny         # E5: deny running a file this session wrote (opt-in)
+    session_written_exec_allow:        # E5 exemptions: root-relative path regexes
+      - '^approved/'
   protected_paths: []                  # E2 extras (manifest, ledger, settings are built in)
   rate_limits:
     - action: tool_call                # E4: per-session tool-call budget
