@@ -96,6 +96,12 @@ defer, and how much it may spend.
   - `irreversible_actions.deny_patterns[]` are Python regexes matched against Bash commands;
     a match is denied outright (E3) **regardless of** `irreversible_action_policy`, which
     governs everything the patterns do not name.
+  - `irreversible_actions.session_written_exec: deny` (field 1.2+) denies a Bash command that
+    names a file the same session wrote with Write/Edit/MultiEdit/NotebookEdit, unless the
+    command is a read-only tool such as `cat`, `ls` or `git` (E5). It closes the
+    write-then-execute gap in E3. `session_written_exec_allow[]` regexes exempt root-relative
+    paths. It matches command text, so indirection, implicit execution (`make`) and files
+    created by Bash itself still get through.
   - `protected_paths[]` are Python regexes matched against file-tool paths and Bash command
     text (E2), in addition to the built-in set (the manifest, `.claude/settings*.json`,
     `hooks.json`, the ledger, the call counter). Regex matching is a tripwire, not a sandbox.

@@ -87,7 +87,7 @@ field/
 │   └── field.md                        # /field slash command logic
 ├── hooks/
 │   ├── hooks.json                      # PreToolUse registration (auto-loaded by Claude Code)
-│   ├── field-gate.py                   # the Enforcement Gate (E1–E4, L)
+│   ├── field-gate.py                   # the Enforcement Gate (E1–E5, L)
 │   ├── verify-ledger.py                # hash-chain verifier (/field verify)
 │   └── test/                           # fixture + smoke test: bash hooks/test/run.sh
 ├── install.ps1 / install.sh            # manual installers
@@ -122,7 +122,8 @@ The plugin ships an **Enforcement Gate**: a Claude Code `PreToolUse` hook (`hook
 | E2 protected paths | built-in set + `enforcement.protected_paths` (regexes) | edits/commands touching the manifest, `.claude/settings*.json`, `hooks.json`, the ledger denied |
 | E3 irreversible actions | `enforcement.irreversible_actions.deny_patterns` (regexes) | matching Bash commands denied |
 | E4 call budget | `enforcement.rate_limits` entry `{action: tool_call, period: session}` | per-session tool-call ceiling (a proxy, not a dollar spend cap) |
-| L ledger | `ledger.store` when path-like, else `.claude/state/field-ledger.jsonl` | every decision appended, sha-256 hash-chained; `/field verify` checks it |
+| E5 session-written execution (opt-in, 1.2+) | `enforcement.irreversible_actions.session_written_exec: deny` (+ `session_written_exec_allow` regexes) | a Bash command that names a file this session wrote with a file tool is denied, unless it is a read-only tool (`cat`, `ls`, `git`, ...); covers `bash x.sh`, `./x.sh`, `python3 x.py`, `cat x.sh \| bash`, `-c` strings, wrappers like `sudo` |
+| L ledger | `ledger.store` when path-like, else `.claude/state/field-ledger.jsonl` | every decision appended, sha-256 hash-chained; `/field verify` checks it. File-tool records carry `path`: root-relative inside the project, `sha256:<hex>` outside it |
 
 Gated tools: Bash, Edit, Write, MultiEdit, NotebookEdit. Requires `python3` and PyYAML on PATH;
 without PyYAML the gate fails closed. The gate loads only with the plugin install (Method A);
@@ -131,10 +132,14 @@ governance changes are made by the human, outside the session.
 
 ## Limitations
 
-Enforcement and Ledger are runtime-enforced in Claude Code (E1–E4, L above); Federated, Identity
+Enforcement and Ledger are runtime-enforced in Claude Code (E1–E5, L above); Federated, Identity
 and Delegation remain declared, not enforced. The spend cap remains a tool-call proxy. The ledger
 hash chain is tamper-evident, not tamper-proof — anyone with write access can rewrite it. Regex
-matching is a guardrail, not a sandbox. `/field audit` produces an audit-ready report;
+matching is a guardrail, not a sandbox. E5 matches command text: indirection (`F=x.sh; bash $F`, `eval`), programs that load a written file
+without naming it (`make`, `npm test`) and files created by Bash itself (`echo > x.sh`, `curl -o`)
+are not caught, and paths resolve against the project root rather than the shell's working
+directory. E5 is strict on purpose: non-read-only commands naming a written file (`cp`, `mv`,
+`pytest x.py`) are denied unless exempted. `/field audit` produces an audit-ready report;
 independent certification is a separate service.
 
 ## Related

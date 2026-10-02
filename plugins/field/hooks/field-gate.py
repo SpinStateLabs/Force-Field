@@ -14,22 +14,31 @@ Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project di
                           (Python re.search), independent of irreversible_action_policy.
   E4  call budget      -> deny once the session's gated-call count exceeds `max` of the
                           enforcement.rate_limits entry {action: tool_call, period: session}.
+  E5  session-written  -> opt-in (enforcement.irreversible_actions.session_written_exec: deny).
+      execution           Deny a Bash command that executes a file this same session was allowed
+                          to write with a file tool (Write/Edit/MultiEdit/NotebookEdit).
   L   ledger           -> append a sha-256 hash-chained JSONL record for every decision to
                           ledger.store when it is path-like, else .claude/state/field-ledger.jsonl.
+                          File-tool records carry `path`: root-relative inside the project,
+                          sha256:<hex> outside it (no plaintext absolute paths).
 
 Exit 0 = allow. Exit 2 = deny (stderr line + JSON permissionDecision surfaced to the model).
 Fail-closed: with a manifest present, an unreadable manifest, missing PyYAML, a misconfigured
 kill switch, or any internal error denies with rule E0. Without a manifest the hook does nothing.
 Dependencies: PyYAML (pip install pyyaml). Without it the gate fails closed (E0).
 Limits: regex matching is a tripwire, not a sandbox; the call counter is not locked against
-parallel tool calls; Read/Glob/Grep are not gated (see hooks.json matcher).
+parallel tool calls; Read/Glob/Grep are not gated (see hooks.json matcher). E5 matches command
+text, not process execution: renames, sh -c "$(cat x)", eval and files created by Bash itself
+(echo > x.sh, curl -o) are not caught; paths resolve against the project root, not the shell cwd.
 """
 import datetime
 import hashlib
 import json
 import os
 import pathlib
+import posixpath
 import re
+import shlex
 import sys
 
 MANIFEST_NAME = "field-manifest.yaml"
@@ -43,6 +52,13 @@ FILE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 BUILTIN_PROTECTED = [r".*field-manifest\.ya?ml$", r".*\.claude/settings.*\.json$", r".*hooks\.json$"]
 BUDGET_ACTIONS = {"tool_call"}
 BUDGET_PERIODS = {"session", "per-session", "per_session"}
+SWE_MODES = {"allow", "deny"}
+# Interpreters whose first non-flag argument is a script path (E5).
+INTERPRETER_RE = re.compile(
+    r"^(?:(?:ba|z|da|k)?sh|source|\.|python(?:\d+(?:\.\d+)?)?|node|deno|bun|ruby|perl|php|"
+    r"pwsh(?:\.exe)?|powershell(?:\.exe)?)$")
+# Wrapper commands that run another program (E5): their whole command line is checked.
+WRAPPERS = {"sudo", "env", "nohup", "time", "exec", "command", "nice", "builtin"}
 
 
 def project_root(inp):
@@ -135,8 +151,102 @@ def tool_call_budget(enf):
     return None
 
 
+def path_key(raw, root):
+    """Ledger key for a file path. Root-relative POSIX path when it is inside the project root;
+    otherwise 'sha256:<hex>' of the normalised absolute path, so the ledger never holds plaintext
+    paths from outside the project (usernames, client folders). None for an empty value."""
+    s = _norm(os.path.expanduser(str(raw or ""))).strip()
+    if not s:
+        return None
+    win = bool(re.match(r"^[A-Za-z]:", _norm(str(root)))) or os.name == "nt"
+    rootn = posixpath.normpath(_norm(str(root) if win else os.path.realpath(str(root))))
+    if win:
+        s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
+    if not (s.startswith("/") or re.match(r"^[A-Za-z]:/", s)):
+        s = rootn + "/" + s
+    if not win:
+        s = _norm(os.path.realpath(s))
+    s = posixpath.normpath(s)
+    if win:
+        s, rootn = s.casefold(), rootn.casefold()
+    if rootn in ("/", "") or re.match(r"^[a-z]:$", rootn.casefold()):
+        return "sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
+    if (s.casefold() if win else s).startswith((rootn.casefold() if win else rootn) + "/"):
+        return s[len(rootn) + 1:]
+    return "sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
+
+
+def session_written_paths(ledger_path, session):
+    """Path keys this session was allowed to write via a file tool. Raises ValueError on an
+    unreadable record, so the caller fails closed."""
+    written = set()
+    if not ledger_path.exists():
+        return written
+    for n, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            raise ValueError(f"ledger line {n} is not valid JSON")
+        if (isinstance(rec, dict) and rec.get("session") == session and rec.get("decision") == "allow"
+                and rec.get("tool") in FILE_TOOLS and isinstance(rec.get("path"), str)):
+            written.add(rec["path"])
+    return written
+
+
+READ_ONLY = {"cat", "ls", "head", "tail", "less", "more", "wc", "grep", "rg", "diff", "stat", "file",
+             "git", "sha256sum", "md5sum", "chmod", "echo", "printf", "test", "["}
+SHELL_KEYWORDS = {"if", "then", "elif", "else", "do", "while", "until", "!", "{", "}", "(", ")", "time", "coproc"}
+SEPARATORS = {";", "&", "&&", "|", "||", "|&", "\n", ";;"}
+REDIRECT = re.compile(r"^\d*(?:[<>]+&?|&>>?)$")
+
+
+def _shell_tokens(cmd):
+    cmd = re.sub(r"\$\(|`|<\(|>\(", " ; ", cmd).replace("\n", " ; ")
+    lex = shlex.shlex(cmd, posix=True, punctuation_chars=";&|()<>")
+    lex.whitespace_split = True
+    lex.commenters = ""
+    return list(lex)  # ValueError propagates: caller fails closed
+
+
+def exec_suspect_tokens(cmd, depth=0):
+    """Tokens that may be executed. Fail-closed: every token of a segment whose command word is
+    not a known read-only tool, plus every token of a command that pipes/redirects into an interpreter."""
+    toks = _shell_tokens(cmd or "")
+    out, seg, segs = [], [], []
+    for t in toks + [";"]:
+        if t in SEPARATORS:
+            segs.append(seg); seg = []
+        else:
+            seg.append(t)
+    interp_anywhere = False
+    for seg in segs:
+        i = 0
+        while i < len(seg) and (seg[i] in SHELL_KEYWORDS or REDIRECT.match(seg[i])
+                                or re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", seg[i])):
+            i += 2 if REDIRECT.match(seg[i]) else 1
+        if i >= len(seg):
+            continue
+        word = posixpath.basename(_norm(seg[i]))
+        if INTERPRETER_RE.match(re.sub(r"(?i)\.exe$", "", word).lower()) or word in WRAPPERS:
+            interp_anywhere = True
+        if word not in READ_ONLY:
+            out.extend(seg)
+            if depth < 3:
+                for j, t in enumerate(seg[:-1]):
+                    if t in ("-c", "-Command"):
+                        out.extend(exec_suspect_tokens(seg[j + 1], depth + 1))
+    if interp_anywhere:
+        out.extend(t for s in segs for t in s)
+    return out
+
+
 def ledger_append(ledger_path, record):
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    if not ledger_path.exists():
+        # New ledgers are owner-only on POSIX (no-op on Windows). Existing files are left as they are.
+        os.close(os.open(str(ledger_path), os.O_CREAT | os.O_WRONLY, 0o600))
     prev = "0" * 64
     if ledger_path.exists():
         lines = ledger_path.read_text(encoding="utf-8").strip().splitlines()
@@ -178,6 +288,8 @@ def enforce(inp, manifest, root, ledger_path, store_source):
              "permission_mode": inp.get("permission_mode"),
              "input_digest": hashlib.sha256(json.dumps(ti, sort_keys=True).encode()).hexdigest()[:16],
              "store_source": store_source}
+    if tool in FILE_TOOLS:
+        event["path"] = path_key(ti.get("file_path") or ti.get("notebook_path") or "", root)
 
     if manifest.get("_unparsed"):
         deny(ledger_path, event, "E0", f"manifest unreadable ({manifest['_unparsed']}); fail-closed")
@@ -220,6 +332,40 @@ def enforce(inp, manifest, root, ledger_path, store_source):
             if re.search(str(pat), cmd):
                 deny(ledger_path, event, "E3", f"command matched irreversible-action pattern '{pat}'")
 
+    # E5 session-written execution (opt-in): deny running a file this session wrote via a file tool.
+    if tool == "Bash":
+        ia = enf.get("irreversible_actions") or {}
+        if not isinstance(ia, dict):
+            deny(ledger_path, event, "E0", "irreversible_actions is not a mapping; fail-closed")
+        mode = str(ia.get("session_written_exec") or "allow").strip().casefold()
+        if mode not in SWE_MODES:
+            deny(ledger_path, event, "E0", "session_written_exec must be allow or deny; fail-closed")
+        if mode == "deny":
+            allow = ia.get("session_written_exec_allow") or []
+            if not isinstance(allow, list):
+                deny(ledger_path, event, "E0", "session_written_exec_allow must be a list; fail-closed")
+            try:
+                flags = re.IGNORECASE if (os.name == "nt" or re.match(r"^[A-Za-z]:", _norm(str(root)))) else 0
+                exempt = [re.compile(str(p), flags) for p in allow]
+            except re.error:
+                deny(ledger_path, event, "E0", "invalid session_written_exec_allow pattern; fail-closed")
+            try:
+                written = session_written_paths(ledger_path, session)
+            except (OSError, ValueError) as exc:
+                deny(ledger_path, event, "E0", f"ledger unreadable for E5 ({exc.__class__.__name__}); fail-closed")
+            try:
+                toks = exec_suspect_tokens(str(ti.get("command", "") or ""))
+            except ValueError:
+                deny(ledger_path, event, "E0", "command could not be tokenised for E5; fail-closed")
+            for tok in toks:
+                key = path_key(tok, root)
+                if key in written and not (not key.startswith("sha256:")
+                                           and any(rx.search(key) for rx in exempt)):
+                    # Name the ledger key, not the raw token: an absolute token would put a
+                    # plaintext path (username, client folder) into the ledger.
+                    deny(ledger_path, event, "E5",
+                         f"command executes '{key}', a file this session wrote")
+
     # E4 tool-call budget (runtime proxy for spend_cap): counts gated calls per session.
     budget = tool_call_budget(enf)
     if budget:
@@ -236,16 +382,19 @@ def enforce(inp, manifest, root, ledger_path, store_source):
 
 
 def main():
+    bad_input = False
     try:
         inp = json.load(sys.stdin)
         if not isinstance(inp, dict):
-            inp = {}
+            inp, bad_input = {}, True
     except Exception:
-        inp = {}
+        inp, bad_input = {}, True
     root = project_root(inp)
     manifest = load_manifest(manifest_path(root))
     if manifest is None:
         sys.exit(0)  # no manifest: not a FIELD-governed project, do nothing
+    if bad_input:
+        emit_deny("E0", "hook input is not a JSON object; fail-closed")
     ledger_path, store_source = resolve_store(manifest, root)
     try:
         enforce(inp, manifest, root, ledger_path, store_source)

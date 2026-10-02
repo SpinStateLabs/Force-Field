@@ -36,6 +36,9 @@ enforcement:
       - '\bgit\s+push\s+.*--force'
       - '\bDROP\s+TABLE\b'
       - '\bstripe\b.*\bcharges\b'
+    session_written_exec: deny         # E5: deny running a file this session wrote (opt-in)
+    session_written_exec_allow:        # E5 exemptions: root-relative path regexes
+      - '^approved/'
   protected_paths: []                  # E2 extras (manifest, ledger, settings are built in)
   rate_limits:
     - action: tool_call                # E4: per-session tool-call budget

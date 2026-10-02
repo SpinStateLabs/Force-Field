@@ -174,6 +174,17 @@
               "type": "array",
               "items": { "type": "string", "minLength": 1 },
               "description": "Python re.search patterns matched against Bash tool_input.command; a match is denied. A tripwire, not a sandbox."
+            },
+            "session_written_exec": {
+              "type": "string",
+              "enum": ["allow", "deny"],
+              "default": "allow",
+              "description": "E5 (Enforcement Gate, field 1.2+). deny = a Bash command that names a file this same session was allowed to write with a file tool (Write/Edit/MultiEdit/NotebookEdit) is denied, unless the command is a read-only tool (cat, ls, git, ...). Matches command text, not process execution: a tripwire for write-then-execute drift, not a sandbox. Default allow (v1.1 behaviour)."
+            },
+            "session_written_exec_allow": {
+              "type": "array",
+              "items": { "type": "string", "minLength": 1 },
+              "description": "Python re.search patterns matched against the root-relative path of a session-written file; a match exempts it from E5 (e.g. '^approved/'). No effect on files outside the project root."
             }
           }
         },

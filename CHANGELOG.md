@@ -12,9 +12,51 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 - FORCE v1.1 refinements based on real-world usage feedback.
 - FIELD refinements: manifest examples per pillar, reference architectures; possible reference implementation of runtime enforcement in n8n.
-- Enforcement Gate v1.2: policy-driven verdicts (`irreversible_action_policy` → deny / ask / allow-with-ledger), a locked call counter, a `kill_switch.local_sentinel` alongside an estate endpoint.
+- Enforcement Gate, next: policy-driven verdicts (`irreversible_action_policy` → deny / ask / allow-with-ledger), a locked call counter, a `kill_switch.local_sentinel` alongside an estate endpoint.
 - Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
 - FORCE + FIELD runtime composition — automatic FORCE application inside FIELD-declared agents.
+
+---
+
+## field — 1.2.0 / marketplace — 1.4.0 — 2026-10-02
+
+### Added
+
+- **E5 session-written execution** (opt-in): with `enforcement.irreversible_actions.session_written_exec: deny`, the Enforcement Gate denies a Bash command that names a file the same session was allowed to write with a file tool (Write, Edit, MultiEdit, NotebookEdit), unless the command is one of a short list of read-only tools (`cat`, `ls`, `head`, `tail`, `less`, `more`, `wc`, `grep`, `rg`, `diff`, `stat`, `file`, `git`, `sha256sum`, `md5sum`, `chmod`, `echo`, `printf`, `test`). If a shell, interpreter or wrapper (`sudo`, `env`, `nohup`, `exec`, ...) appears anywhere in the command, every token is checked, which covers pipes (`cat x.sh | bash`), redirects (`bash < x.sh`), `-c` strings, subshells, `$(...)` and backticks. `session_written_exec_allow[]` regexes exempt root-relative paths (e.g. `'^approved/'`). Default `allow`: manifests without the key behave exactly as in 1.1.
+- **Ledger write paths**: file-tool records now carry `path`. Inside the project it is the root-relative path; outside it is `sha256:<hex>` of the normalised absolute path. E5 deny reasons name the same key, never the raw command token.
+- Schema (additive; `schema_version` unchanged): optional `session_written_exec` (`allow` | `deny`) and `session_written_exec_allow[]` under `enforcement.irreversible_actions`. Templates carry them as commented examples; the test fixture enables them.
+- `hooks/test/run_e5.sh` (70 cases) and a CI job that runs it with the existing smoke test.
+
+### Changed
+
+- New ledger files are created owner-only (0600) on POSIX; existing ledgers keep their permissions; no effect on Windows.
+- Fail-closed fix (all rules, not only E5): with a manifest present, hook input that is not a JSON object now denies with `E0`. In 1.1 it was treated as an empty call and allowed. Claude Code always sends valid JSON, so this only matters if something else invokes the hook.
+- Fail-closed extended: with E5 enabled, an unreadable ledger, an invalid `session_written_exec` value, a non-list or invalid `session_written_exec_allow`, or a command that cannot be tokenised denies with `E0`. E0 reasons name the exception class only, not file paths.
+- Paths are matched case-insensitively on Windows (keys are stored case-folded; exemption regexes match case-insensitively there). Git Bash `/c/...` paths map to `C:/...`. On POSIX, symlinked project roots are resolved.
+
+### Why
+
+- Write-then-execute got past E3: an agent writes `cleanup.sh`, then runs `bash ./cleanup.sh`, which matches no deny pattern. Raised in public review of the 1.1 launch by Ridzwan Gigih Herdyantha, who also proposed the approach used here: have the ledger record the write path so Enforcement can answer "did this session create this file" with no new state (L feeding E).
+- A pre-merge adversarial review found eight issues in the first E5 draft (flag arguments hiding the script, quoted names, pipes/redirects/subshells, path-key mismatches on Windows and symlinked roots, a string exemption that exempted everything, a path in an E0 reason, `~` handling, a test-script platform check). All are fixed and covered by tests.
+
+### Known limitations
+
+- E5 matches command text, not process execution. Indirection gets through: a variable holding the path (`F=x.sh; bash $F`), `eval`, encoded payloads.
+- Implicit execution gets through: programs that load a written file without naming it (`make` with a written Makefile, `npm test`, `pytest` with no arguments, git hooks).
+- Only files written with file tools are tracked. Files created by Bash itself (`echo > x.sh`, `curl -o x.sh`) are not. This is the next gap.
+- E5 is deliberately strict: any command outside the read-only list that names a written file is denied, including `cp`, `mv`, `sed -i`, `pytest test_x.py` and `python3 tool.py x.sh`. Use `session_written_exec_allow` for intended workflows.
+- Paths resolve against the project root, not the shell's working directory (`cd sub && ./x.sh` is not matched to `sub/x.sh`).
+- On Windows, Git Bash mount paths other than `/<drive>/...` (for example `/tmp/...`, `/home/...`) are not mapped to Windows paths, so a command naming a written file in that form is not matched.
+- PreToolUse records a permitted write, not a completed one, so E5 can deny a file whose write failed (the safe direction).
+- Records written by field 1.1.x carry no path, so writes made before the upgrade are not tracked.
+- `sha256:` keys are unsalted: they keep plaintext out of the ledger but a guessed path can be confirmed against them.
+- Deleting ledger lines hides a write from E5; `/field verify` detects the broken chain.
+- Unchanged from 1.1: E1 and E2 deny reasons can include the absolute path of the kill-switch sentinel or the ledger.
+- The ledger is read on every Bash call while E5 is on (linear in ledger size).
+
+### Measured
+
+- `bash hooks/test/run_e5.sh`: 70/70 pass; `bash hooks/test/run.sh`: unchanged (allow / E3 / E2 / E1, ledger intact). With E5 off, 16 edge-case inputs give identical exit codes, output and ledger records to 1.1.1 apart from the new `path` field (malformed hook input aside, which now denies). Python 3.12 on Linux, and Python 3.13 under Git Bash on Windows 11. Not yet run in a live Claude Code session.
 
 ---
 
