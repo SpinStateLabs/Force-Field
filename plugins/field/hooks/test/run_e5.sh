@@ -40,6 +40,22 @@ for c in 'cat x.sh' 'git add x.sh' 'ls x.sh' 'cat x.sh | grep a' 'bash ./approve
   expect "allow: $c" 0 "$(call t1 Bash "{\"command\":\"$c\"}")"
 done
 expect "other session may run t1's file" 0 "$(call t2 Bash '{"command":"bash ./x.sh"}')"
+# command word is a path, not a tool (second public review): a session-written file named after an
+# allowlisted read-only tool must not borrow that tool's exemption; the real tool stays allowed
+expect "write x3.sh allowed (t3)"            0 "$(call t3 Write '{"file_path":"x3.sh","content":"echo"}')"
+for n in cat ls head tail less more wc grep rg diff stat file git sha256sum md5sum chmod echo printf test '['; do
+  expect "write $n allowed (t3)"              0 "$(call t3 Write "{\"file_path\":\"$n\",\"content\":\"x\"}")"
+  expect "E5 deny: ./$n (named like a read-only tool)" 2 "$(call t3 Bash "$(python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "./$n")")"
+done
+expect "write tools/cat allowed (t3)"        0 "$(call t3 Write '{"file_path":"tools/cat","content":"x"}')"
+for c in './tools/cat' 'chmod +x git && ./git' './cat x3.sh' 'sudo ./git' "bash -c './git'" '(./git)' 'FOO=1 ./git'; do
+  expect "E5 deny (read-only name): $c"       2 "$(call t3 Bash "$(python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "$c")")"
+done
+for c in 'cat x3.sh' 'git status' 'ls' 'head -n1 x3.sh' 'git add x3.sh'; do
+  expect "allow: bare '$c' although t3 wrote files named cat/git/ls" 0 "$(call t3 Bash "$(python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "$c")")"
+done
+expect "E5 deny: ./x3.sh still denied (t3)"  2 "$(call t3 Bash '{"command":"./x3.sh"}')"
+expect "other session may run t3's ./git"    0 "$(call t2 Bash '{"command":"./git"}')"
 # ledger: paths logged, root-relative, no plaintext absolute path
 python3 - "$HERE" "$(abspath "$HERE")" <<'PY'
 import json,sys
