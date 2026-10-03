@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://field.spinstatelabs.ca/v1/manifest-schema.json",
-  "$comment": "Revision 1.1.0 (2026-09): added optional enforcement.irreversible_actions and enforcement.protected_paths, and seal_algorithm sha-256-chain; documented the `file` kill-switch, `tool_call` rate-limit and path-like ledger.store conventions honoured by the Claude Code Enforcement Gate (field plugin hooks/). Additive: schema_version is unchanged and every v1 manifest remains valid.",
+  "$comment": "Revision 1.2.0 (2026-10): added optional enforcement.irreversible_actions.session_written_exec and session_written_exec_allow (E5); the gate now reads Bash and PowerShell commands. Revision 1.1.0 (2026-09): added optional enforcement.irreversible_actions and enforcement.protected_paths, and seal_algorithm sha-256-chain; documented the `file` kill-switch, `tool_call` rate-limit and path-like ledger.store conventions honoured by the Claude Code Enforcement Gate (field plugin hooks/). Additive: schema_version is unchanged and every v1 manifest remains valid.",
   "title": "FIELD Governance Manifest",
   "description": "Spin State Labs FIELD v1 governance manifest for a single agentic AI deployment. Every FIELD-governed agent carries exactly one manifest. All five sections (Federated, Identity, Enforcement, Ledger, Delegation) are required. Critical-gap rules: no kill switch, no delegation grantor, or an unsealed ledger make a manifest INVALID.",
   "type": "object",
@@ -173,13 +173,13 @@
             "deny_patterns": {
               "type": "array",
               "items": { "type": "string", "minLength": 1 },
-              "description": "Python re.search patterns matched against Bash tool_input.command; a match is denied. A tripwire, not a sandbox."
+              "description": "Python re.search patterns matched against the command of a shell tool (Bash, and PowerShell from field 1.2, case-insensitive there); a match is denied. A tripwire, not a sandbox."
             },
             "session_written_exec": {
               "type": "string",
               "enum": ["allow", "deny"],
               "default": "allow",
-              "description": "E5 (Enforcement Gate, field 1.2+). deny = a Bash command that names a file this same session was allowed to write with a file tool (Write/Edit/MultiEdit/NotebookEdit) is denied, unless the command is a read-only tool (cat, ls, git, ...). Matches command text, not process execution: a tripwire for write-then-execute drift, not a sandbox. Default allow (v1.1 behaviour)."
+              "description": "E5 (Enforcement Gate, field 1.2+). deny = a Bash command that names a file this same session was allowed to write with a file tool (Write/Edit/MultiEdit/NotebookEdit) is denied, unless the command is a read-only tool (cat, ls, git, ...); a PowerShell command that names such a file is denied, reads included. Matches command text, not process execution: a tripwire for write-then-execute drift, not a sandbox. Default allow (v1.1 behaviour)."
             },
             "session_written_exec_allow": {
               "type": "array",

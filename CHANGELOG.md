@@ -18,6 +18,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
+## field — 1.2.1 / marketplace — 1.4.1 — 2026-10-02
+
+### Changed
+
+- Schema descriptions only (no new keys, no validation change): `$comment` records revision 1.2.0; `deny_patterns` now says it matches Bash and PowerShell commands (case-insensitive for PowerShell); `session_written_exec` notes that PowerShell commands naming a session-written file are denied, reads included. They described 1.1 behaviour.
+
+---
+
 ## field — 1.2.0 / marketplace — 1.4.0 — 2026-10-02
 
 ### Added
