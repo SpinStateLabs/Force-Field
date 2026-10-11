@@ -18,6 +18,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
+## field — 1.2.2 / marketplace — 1.4.2 — 2026-10-03
+
+### Fixed
+
+- **E5 no longer exempts a file named after a read-only tool.** The read-only check compared the basename of the command word, so once a session had written a file called `git` or `cat`, running it as `./git` or `tools/cat` was allowed. A command word that contains a path separator and resolves to a file the session wrote is now checked like any other command. The real `cat`, `git` and the rest of the read-only list are unaffected. Reported by Ridzwan Gigih Herdyantha in review of #2.
+- `hooks/test/run_e5.sh` gains 56 cases: every read-only name run as `./name`, a nested path, `chmod` then run, wrappers and subshells, and controls showing the real `cat`, `git` and `ls` stay allowed after a same-named file is written.
+
+### Known limitations
+
+- A command word with no path separator is resolved through `PATH` and keeps the read-only exemption. A `PATH` that includes the project directory is outside E5's model.
+
+---
+
 ## field — 1.2.1 / marketplace — 1.4.1 — 2026-10-02
 
 ### Changed

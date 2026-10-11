@@ -219,9 +219,11 @@ def _shell_tokens(cmd):
     return list(lex)  # ValueError propagates: caller fails closed
 
 
-def exec_suspect_tokens(cmd, depth=0):
+def exec_suspect_tokens(cmd, depth=0, root=None, written=None):
     """Tokens that may be executed. Fail-closed: every token of a segment whose command word is
-    not a known read-only tool, plus every token of a command that pipes/redirects into an interpreter."""
+    not a known read-only tool, plus every token of a command that pipes/redirects into an interpreter.
+    A path-qualified command word (./git, tools/cat) that names a file this session wrote is not a
+    read-only tool, whatever its basename: READ_ONLY describes the tool, not a path that borrows its name."""
     toks = _shell_tokens(cmd or "")
     out, seg, segs = [], [], []
     for t in toks + [";"]:
@@ -240,12 +242,16 @@ def exec_suspect_tokens(cmd, depth=0):
         word = posixpath.basename(_norm(seg[i]))
         if INTERPRETER_RE.match(re.sub(r"(?i)\.exe$", "", word).lower()) or word in WRAPPERS:
             interp_anywhere = True
-        if word not in READ_ONLY:
+        # A command word containing a separator is a path, not a PATH lookup: if it resolves to a
+        # file this session wrote, the read-only exemption does not apply to it.
+        runs_written = (written is not None and "/" in _norm(seg[i])
+                        and path_key(seg[i], root) in written)
+        if runs_written or word not in READ_ONLY:
             out.extend(seg)
             if depth < 3:
                 for j, t in enumerate(seg[:-1]):
                     if t in ("-c", "-Command"):
-                        out.extend(exec_suspect_tokens(seg[j + 1], depth + 1))
+                        out.extend(exec_suspect_tokens(seg[j + 1], depth + 1, root, written))
     if interp_anywhere:
         out.extend(t for s in segs for t in s)
     return out
@@ -430,7 +436,7 @@ def enforce(inp, manifest, root, ledger_path, store_source):
                 deny(ledger_path, event, "E0", f"ledger unreadable for E5 ({exc.__class__.__name__}); fail-closed")
             try:
                 if tool == "Bash":
-                    toks = exec_suspect_tokens(shell_command(tool, ti))
+                    toks = exec_suspect_tokens(shell_command(tool, ti), root=root, written=written)
                 else:  # PowerShell: no parser, so every token counts (over-blocks reads; safe side)
                     toks = ps_tokens(shell_command(tool, ti))
                     # $PWD/x.sh, -FilePath:x.sh: also try the text after the last ':' or '$var/'.
