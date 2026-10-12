@@ -119,7 +119,7 @@ The plugin ships an **Enforcement Gate**: a Claude Code `PreToolUse` hook (`hook
 | Rule | Manifest key | Effect |
 |---|---|---|
 | E1 kill switch | `enforcement.kill_switch.endpoint` with `method: file` (else `.claude/state/KILL`) | sentinel file present → every gated tool call denied |
-| E2 protected paths | built-in set + `enforcement.protected_paths` (regexes) | edits/commands touching the manifest, `.claude/settings*.json`, `hooks.json`, the ledger denied |
+| E2 protected paths | built-in set + `enforcement.protected_paths` (regexes) | edits/commands touching the manifest, `.claude/settings*.json`, `hooks.json`, the ledger, the call counter or anything else in `.claude/state/` denied (1.2.3: every unquoted shell word is checked, not only the command's end, plus quoted words given to a mutating command, a redirect, `sh -c`/`eval`/`xargs`; paths are normalised and matched case-insensitively; globs in those positions such as `rm *.yaml` or `ls *.yaml | xargs rm` are expanded against the real paths, while `ls *` and `grep "x"` are not; `rm`/`mv` of the project directory or `.claude/` denied). The kill sentinel and `.claude/state/field.json` stay writable so `/field kill` and the skill work |
 | E3 irreversible actions | `enforcement.irreversible_actions.deny_patterns` (regexes) | matching Bash or PowerShell commands denied |
 | E4 call budget | `enforcement.rate_limits` entry `{action: tool_call, period: session}` | per-session tool-call ceiling (a proxy, not a dollar spend cap) |
 | E5 session-written execution (opt-in, 1.2+) | `enforcement.irreversible_actions.session_written_exec: deny` (+ `session_written_exec_allow` regexes) | a Bash command that names a file this session wrote with a file tool is denied, unless it is a read-only tool (`cat`, `ls`, `git`, ...); covers `bash x.sh`, `./x.sh`, `python3 x.py`, `cat x.sh \| bash`, `-c` strings, wrappers like `sudo` |
@@ -137,13 +137,20 @@ governance changes are made by the human, outside the session.
 
 Enforcement and Ledger are runtime-enforced in Claude Code (E1–E5, L above); Federated, Identity
 and Delegation remain declared, not enforced. The spend cap remains a tool-call proxy. The ledger
-hash chain is tamper-evident, not tamper-proof — anyone with write access can rewrite it. Regex
-matching is a guardrail, not a sandbox. E5 matches command text: indirection (`F=x.sh; bash $F`, `eval`), programs that load a written file
-without naming it (`make`, `npm test`) and files created by Bash itself (`echo > x.sh`, `curl -o`)
-are not caught, and paths resolve against the project root rather than the shell's working
-directory. E5 is strict on purpose: non-read-only commands naming a written file (`cp`, `mv`,
-`pytest x.py`) are denied unless exempted. `/field audit` produces an audit-ready report;
-independent certification is a separate service.
+hash chain is tamper-evident, not tamper-proof: `/field verify` detects an edit that breaks a
+link, not a ledger re-chained from scratch after the edit, which verifies INTACT. The chain is
+unkeyed (`sha-256-chain`); the gate implements no signed or keyed scheme, so the chain's value
+rests on who can write the file. E2 denies the agent's own tools every write to the ledger and to
+the rest of `.claude/state/`; a process outside the gate (or the human) can still rewrite it. Regex
+matching is a guardrail, not a sandbox. E2 and E5 match command text: indirection (`F=x.sh; bash $F`,
+`eval`, variables), programs that load or delete a file without naming it (`make`, `npm test`,
+`git clean`, `find -delete`) and files created by Bash itself (`echo > x.sh`, `curl -o`) are not
+caught, and paths resolve against the project root rather than the shell's working directory
+(`cd .claude && rm -r state`). E5 is strict on purpose: non-read-only commands naming a written file
+(`cp`, `mv`, `pytest x.py`) are denied unless exempted. Hook input over 4 MiB, a shell command over
+64 KiB, or a check that runs past 5 s denies with E0 rather than risk the 10 s hook timeout, which
+fails open. `/field audit` produces an audit-ready report; independent certification is a separate
+service.
 
 ## Related
 

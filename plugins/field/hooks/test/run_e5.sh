@@ -13,6 +13,8 @@ call() { # session tool json-input -> prints exit code
 expect() { # label expected actual
   if [ "$2" = "$3" ]; then echo "PASS  $1"; else echo "FAIL  $1 (expected $2, got $3)"; fail=1; fi
 }
+pj() { python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "$1"; }
+is_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0;; *) return 1;; esac; }
 run_suite() {
   rm -rf .claude
   export CLAUDE_PROJECT_DIR="$PWD"
@@ -56,6 +58,14 @@ for c in 'cat x3.sh' 'git status' 'ls' 'head -n1 x3.sh' 'git add x3.sh'; do
 done
 expect "E5 deny: ./x3.sh still denied (t3)"  2 "$(call t3 Bash '{"command":"./x3.sh"}')"
 expect "other session may run t3's ./git"    0 "$(call t2 Bash '{"command":"./git"}')"
+# path_key must canonicalise ('..' and symlinks): dropping normpath/realpath passed every case before 1.2.3
+expect "E5 deny: bash ./sub/../x.sh"         2 "$(call t1 Bash '{"command":"bash ./sub/../x.sh"}')"
+expect "E5 deny: python3 a/b/../../x.py"     2 "$(call t1 Bash '{"command":"python3 a/b/../../x.py"}')"
+if is_windows; then echo "SKIP  E5 symlinked project root (Windows)"; else
+  L=$(mktemp -d); ln -s "$HERE" "$L/rootlink"
+  expect "E5 deny: bash <symlink-to-root>/x.sh" 2 "$(call t1 Bash '{"command":"bash '"$L"'/rootlink/x.sh"}')"
+  rm -rf "$L"
+fi
 # ledger: paths logged, root-relative, no plaintext absolute path
 python3 - "$HERE" "$(abspath "$HERE")" <<'PY'
 import json,sys
@@ -121,6 +131,101 @@ out=$(printf '{"session_id":"t1","tool_name":"Bash","tool_input":{"command":"ls"
 case "${out,,}" in *"(.claude/state/kill)"*) echo "PASS  E1 reason names the root-relative sentinel";; *) echo "FAIL  E1 reason: $out"; fail=1;; esac
 rm .claude/state/KILL
 expect "E2: absolute ledger path via MCP"      2 "$(call t1 mcp__fs__write_file '{"path":"'"$(abspath "$HERE")"'/.claude/state/field-ledger.jsonl","content":"x"}')"
+# ---- E2 hardening (field 1.2.3; independent review 2026-10-12) ----
+# F1: Bash is tokenised. An unquoted word naming a governance file anywhere in the command is denied
+# (1.2.2 only caught the command's last word). Quoted words count when they are arguments of a
+# mutating command, redirect targets, or inside a command string a shell/eval/wrapper runs. Globs and
+# braces are expanded against the real paths in those positions only; rm/mv aimed at the project
+# directory, a parent or .claude/ is denied. Session e2 writes nothing (no E5).
+for c in 'rm field-manifest.yaml; true' 'echo x > field-manifest.yaml; true' 'echo x >field-manifest.yaml && ls' \
+         'mv field-manifest.yaml /tmp/m && ls' 'cp a.yaml field-manifest.yaml; true' 'sed -i s/a/b/ field-manifest.yaml; true' \
+         'tee field-manifest.yaml < a; true' 'dd if=a of=field-manifest.yaml; true' 'truncate -s0 field-manifest.yaml; true' \
+         'install a field-manifest.yaml; true' 'ln -sf a field-manifest.yaml; true' 'rm -f .claude/state/field-ledger.jsonl; ls' \
+         'rm -f .claude/state/field-session-calls.json; ls' 'rm -r .claude/state; ls' 'cd .claude/state && ls' \
+         'cat field-manifest.yaml' 'find . -name field-manifest.yaml' \
+         'rm -r .claude; ls' 'mv .claude /tmp/c; ls' 'rm -r .; ls' 'rm -r ..; ls' 'rm -r -- .; ls' \
+         "sh -c 'rm field-manifest.yaml;true'" "bash -c \"sh -c 'rm field-manifest.yaml'\"" 'bash -lc "rm field-manifest.yaml"' \
+         'eval "rm field-manifest.yaml"' 'sudo sh -c "rm field-manifest.yaml"' 'su -c "rm field-manifest.yaml"' \
+         'rm "field-manifest.yaml"' 'echo x > "field-manifest.yaml"; true' 'echo "x > field-manifest.yaml; true' \
+         "rm fie'ld-manifest.yaml'; true" 'cat hooks.json; true' \
+         'rm {field-manifest,x}.yaml; true' 'rm *.yaml' 'rm field-manifest.*' 'rm -r .claude/*' 'rm *' 'rm ./*.y?ml' \
+         'rm field-manifest.yam[l]' 'rm .claude/settings*.json' 'mv *.yaml /tmp/' 'chmod 600 *.yaml' 'sed -i s/a/b/ *.yaml' \
+         'perl -pi -e s/a/b/ *.yaml' 'tee *.yaml < x' 'ln -sf x *.yaml' 'cp x *.yaml' 'truncate -s0 *.yaml' 'echo x >> *.yaml' \
+         'sudo -u root rm *.yaml' 'timeout 5 rm *.yaml' 'ls *.yaml | xargs rm' "find . -name '*.yaml' | xargs rm" \
+         "find . -name '*.yaml' -delete" "find . -name '*.yaml' -exec rm {} \;" \
+         'echo "rm field-manifest.yaml" | sh' 'printf "rm field-manifest.yaml" | bash -s' 'echo "rm *.yaml" | sh' \
+         'find . -delete' 'find . -type f -delete' 'find . -mtime +7 -exec rm {} \;' 'find .claude -delete' \
+         'echo x > sub/../field-manifest.yaml; true' 'echo x > ./.claude/state/../state/field-ledger.jsonl; true'; do
+  expect "E2 deny (shell word): $c" 2 "$(call e2 Bash "$(pj "$c")")"
+done
+expect "E2 deny (shell word): rm <abs root>/*.yaml" 2 "$(call e2 Bash "$(pj "rm $(abspath "$HERE")/*.yaml")")"
+# controls: read-only globs, and governance names inside quoted arguments of non-command-carrying words
+for c in 'echo x > notes.md; true' 'cat README.md; ls' 'rm -f build/field-manifest.yaml.bak' 'git add .claude/commands/x.md' \
+         'ls .claude' 'mkdir -p .claude/agents' 'mkdir -p ~/.claude/state' 'touch .claude/state/KILL' 'rm -r build; mv old new' \
+         'rm *.py' 'rm build/*' 'ls src/*.yaml' 'rm *.json' 'cp src/* dst/' 'git commit -m "fix * handling"' \
+         'python3 -c "print(2*3)"' 'find . -name "*.py"' 'rm {a,b}.txt' 'echo manifest > my-notes.yaml' \
+         'git commit -m "notes about the manifest"' 'rm .claude/agents/*' \
+         'ls *' 'for f in *; do echo $f; done' "find . -name '*.yaml'" 'cat *.md' 'grep -r x .' 'wc -l *' \
+         'git commit -m "update field-manifest.yaml"' 'echo "see field-manifest.yaml"' 'grep "field-manifest.yaml" README.md' \
+         'cp *.yaml backup/' 'sed s/a/b/ *.yaml' 'echo "rm field-manifest.yaml"' 'cat list.txt | xargs rm' 'ls *.yaml | xargs wc -l' \
+         "find . -name '*.py' -delete" 'tar czf x.tgz *.md' 'echo "see field-manifest.yaml" | cat' 'echo hello | sh' \
+         'find . -type f' 'find build -delete' "find . -path './build/*' -delete"; do
+  expect "E2 allow: $c" 0 "$(call e2 Bash "$(pj "$c")")"
+done
+expect "E2 allow: Write <HOME>/.claude/state/field-manifest-template.yaml (not this project's state dir)" 0 \
+  "$(call e2w Write '{"file_path":"'"$(abspath "$HOME")"'/.claude/state/field-manifest-template.yaml","content":"x"}')"
+# F2: file-tool and MCP paths are normalised (., .., ~, backslashes, symlinks) and the whole state directory is protected
+expect "E2 deny: Write ./.claude/state/../state/field-ledger.jsonl" 2 "$(call e2w Write '{"file_path":"./.claude/state/../state/field-ledger.jsonl","content":"x"}')"
+expect "E2 deny: Write .claude/state/other.json (whole state dir)"   2 "$(call e2w Write '{"file_path":".claude/state/other.json","content":"x"}')"
+expect "E2 deny: Write .claude\\state\\field-session-calls.json"     2 "$(call e2w Write '{"file_path":".claude\\\\state\\\\field-session-calls.json","content":"x"}')"
+expect "E2 deny: Edit <abs>/sub/../.claude/state/field-ledger.jsonl" 2 "$(call e2w Edit '{"file_path":"'"$(abspath "$HERE")"'/sub/../.claude/state/field-ledger.jsonl","old_string":"a","new_string":"b"}')"
+expect "E2 deny: NotebookEdit .claude/state/x.ipynb"                2 "$(call e2w NotebookEdit '{"notebook_path":".claude/state/x.ipynb"}')"
+expect "E2 deny: MCP ./.claude/state/../state/field-ledger.jsonl"   2 "$(call e2w mcp__fs__write_file '{"path":"./.claude/state/../state/field-ledger.jsonl","content":"x"}')"
+expect "E2 deny: MCP .claude/state/x.json"                          2 "$(call e2w mcp__fs__write_file '{"path":".claude/state/x.json","content":"x"}')"
+expect "E2 deny: Write ./docs/../field-manifest.yaml"               2 "$(call e2w Write '{"file_path":"./docs/../field-manifest.yaml","content":"x"}')"
+if is_windows; then echo "SKIP  E2 symlink to the state dir (Windows)"; else
+  ln -s .claude/state "$HERE/statelink"
+  expect "E2 deny: Write statelink/field-ledger.jsonl (symlink to the state dir)" 2 "$(call e2w Write '{"file_path":"statelink/field-ledger.jsonl","content":"x"}')"
+  rm "$HERE/statelink"
+fi
+expect "E2 allow: Write ./docs/../README.md"             0 "$(call e2w Write '{"file_path":"./docs/../README.md","content":"x"}')"
+expect "E2 allow: Write .claude/state/KILL (/field kill)" 0 "$(call e2w Write '{"file_path":".claude/state/KILL","content":""}')"
+expect "E2 allow: Write .claude/state/field.json (skill state)" 0 "$(call e2w Write '{"file_path":".claude/state/field.json","content":"{}"}')"
+expect "E2 allow: Write .claude/agents/x.md"             0 "$(call e2w Write '{"file_path":".claude/agents/x.md","content":"x"}')"
+expect "E2 allow: Write field-manifest.yaml.example"     0 "$(call e2w Write '{"file_path":"field-manifest.yaml.example","content":"x"}')"
+# F4: case-insensitive on every platform (a case-insensitive file system is not a Windows-only thing)
+expect "E2 deny: Write FIELD-MANIFEST.YAML"              2 "$(call e2w Write '{"file_path":"FIELD-MANIFEST.YAML","content":"x"}')"
+expect "E2 deny: Bash echo x > Field-Manifest.yaml"      2 "$(call e2 Bash '{"command":"echo x > Field-Manifest.yaml"}')"
+expect "E2 deny: Write .CLAUDE/Settings.json"            2 "$(call e2w Write '{"file_path":".CLAUDE/Settings.json","content":"x"}')"
+expect "E2 deny: Write .Claude/State/x"                  2 "$(call e2w Write '{"file_path":".Claude/State/x","content":"x"}')"
+expect "E2 deny: MCP HOOKS.JSON"                         2 "$(call e2w mcp__fs__write_file '{"path":"HOOKS.JSON","content":"x"}')"
+expect "E2 deny: PowerShell Remove-Item *.yaml"          2 "$(call e2 PowerShell '{"command":"Remove-Item *.yaml"}')"
+expect "E2 allow: PowerShell Remove-Item *.py"           0 "$(call e2 PowerShell '{"command":"Remove-Item *.py"}')"
+expect "E2 allow: MCP content with '*' bullets is not a glob" 0 "$(call e2w mcp__fs__write_file '{"path":"notes.md","content":"* item\n* item two\na * b"}')"
+# F3: size caps and a time budget. A hook killed by the hooks.json timeout fails open; the gate denies first.
+expect "E0 deny: 70 KB shell command" 2 "$(call e2 Bash "$(python3 -c "import json; print(json.dumps({'command': '; '.join('bash a%d' % i for i in range(6000))}))")")"
+r=$(python3 -c "import json; print(json.dumps({'session_id':'e2w','tool_name':'Write','tool_input':{'file_path':'big.txt','content':'A'*(5*1024*1024)}}))" | python3 "$G" >/dev/null 2>&1; echo $?)
+expect "E0 deny: 5 MB hook input" 2 "$r"
+r=$(python3 -c "import json; print(json.dumps({'session_id':'e2w','tool_name':'Write','tool_input':{'file_path':'big.txt','content':'A'*(3*1024*1024)}}))" | python3 "$G" >/dev/null 2>&1; echo $?)
+expect "allow: 3 MB Write" 0 "$r"
+s=$(date +%s); r=$(python3 -c "import json; print(json.dumps({'session_id':'e2','tool_name':'Bash','tool_input':{'command':'; '.join('bash a%d' % i for i in range(5000))}}))" | python3 "$G" >/dev/null 2>&1; echo $?); e=$(date +%s)
+expect "allow: 58 KB / 5000-segment command (took 10 s in 1.2.2)" 0 "$r"
+[ $((e-s)) -lt 10 ] && echo "PASS  5000-segment command checked in $((e-s)) s" || { echo "FAIL  5000-segment command took $((e-s)) s"; fail=1; }
+python3 - "$G" <<'PY3'
+import importlib.util, io, json, sys
+spec = importlib.util.spec_from_file_location("g", sys.argv[1]); g = importlib.util.module_from_spec(spec); spec.loader.exec_module(g)
+g.TIME_BUDGET_S = -1.0  # every check is already overdue: the E2 loop must deny E0, not run on
+sys.stdin = io.TextIOWrapper(io.BytesIO(json.dumps({"session_id": "e2", "tool_name": "Bash", "tool_input": {"command": "ls"}}).encode()))
+out, sys.stdout = io.StringIO(), io.StringIO()
+try:
+    g.main(); code = 0
+except SystemExit as exc:
+    code = exc.code
+out, sys.stdout = sys.stdout, sys.__stdout__
+ok = code == 2 and "[E0] E2 check exceeded" in out.getvalue()
+print(("PASS" if ok else "FAIL") + "  time budget exceeded -> E0 deny"); sys.exit(0 if ok else 1)
+PY3
+[ $? -eq 0 ] || fail=1
 python3 - "$HERE" "$(abspath "$HERE")" <<'PY2'
 import json,sys
 roots=[r for r in sys.argv[1:] if r]
@@ -157,6 +262,11 @@ T=$(mktemp -d); sed '/session_written_exec/d; /\^approved\//d' field-manifest.ya
 cd "$T"; run_suite
 expect "E5 off: bash ./x.sh allowed" 0 "$(call t1 Bash '{"command":"bash ./x.sh"}')"
 expect "E5 off: E3 still denies rm -rf" 2 "$(call t1 Bash '{"command":"rm -rf build"}')"
+expect "E5 off: E2 denies rm field-manifest.yaml; true" 2 "$(call t1 Bash '{"command":"rm field-manifest.yaml; true"}')"
+expect "E5 off: E2 denies via crude tokens when shlex fails (unbalanced quote)" 2 "$(call t1 Bash "$(pj 'echo "x > field-manifest.yaml; true')")"
+expect "E5 off: heredoc with an apostrophe still allowed (E2 tokeniser fallback is not fail-closed)" 0 "$(call t1 Bash "$(pj "cat <<EOF > notes.md
+Don's notes
+EOF")")"
 python3 "$V" >/dev/null && echo "PASS  ledger intact (E5 off)" || { echo "FAIL  ledger (E5 off)"; fail=1; }
 # bad mode -> E0
 python3 - <<'PY'
