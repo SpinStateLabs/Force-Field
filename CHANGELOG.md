@@ -37,7 +37,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 - `bash hooks/test/run_launcher.sh`: 25/25. Covers: no interpreter with and without a manifest; `FIELD_MANIFEST` relative, absolute and missing; a Store-style stub that consumes stdin and exits 49 plus a broken `py`, then `python` runs the gate with the input intact and one ledger record per call; `py -3`; pass-through of allow and deny; a 200 KB input; a deny whose stdout reader is gone (exit 2, one ledger record, no retry); a gate killed after it ran (E0, one record, no retry); a missing `field-gate.py`; an exception outside `main()`'s handlers (exit 2). Without the `field-gate.py` change, the closed-stdout case writes two ledger records and the exception case exits 1. `run.sh` and `run_e5.sh` unchanged and passing. Python 3.13, dash, Linux.
 - Live, headless Claude Code 2.1.302 on Linux (`--plugin-dir`, `bypassPermissions`), final build: with Python, a destructive command is denied and `echo hi` is allowed and ledgered; with Python removed from PATH, `echo hi` is denied with E0 in a project with a manifest and allowed in one without. The 1.2.3 `hooks.json` under the same Python-free PATH ran `echo hi` with no ledger: the failure reproduced. In 2.1.302 a hook denial also appears in `permission_denials`.
-- Windows not yet run for this release (`hooks/test/check_host.sh`, from Git Bash, is the check to run there).
+- Windows 10 (build 19045), rog-command, Git Bash (MINGW64 3.6.5), Microsoft Store Python 3.14.2 with PyYAML 6.0.3 as `python3` and `py`, python.org 3.14.5 as `python`:
+  - The PR branch cloned with `.gitattributes` honoured (`i/lf w/lf`).
+  - `check_host.sh`: ENFORCED (allow 0, `rm -rf build` denied E3).
+  - Live headless Claude Code, `--plugin-dir`, `bypassPermissions`:
+    - Bash `echo hi` ran.
+    - Bash `rm -rf build` denied E3.
+    - **PowerShell** `Remove-Item -Recurse -Force build` denied E3. This was the first live Windows run of all-tools gating.
+    - PowerShell `Get-Date` with the kill sentinel present denied E1.
+    - Four ledger records.
+  - The first suite run there failed 4 allow cases with E0 "PyYAML missing". The tests' `env -i` had removed `LOCALAPPDATA`, where the Store Python keeps per-user packages. The gate failed closed correctly; the test was wrong. The tests now keep HOME, USERPROFILE, LOCALAPPDATA, APPDATA, SYSTEMROOT, WINDIR, TEMP and TMP, and strip only PATH. The suite has not been re-run on Windows after that change.
 
 ---
 

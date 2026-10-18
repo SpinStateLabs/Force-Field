@@ -10,6 +10,9 @@ SH=$(command -v sh); PY=$(command -v python3 || command -v python)
 "$PY" -c 'import yaml' 2>/dev/null || { echo "FAIL  PyYAML missing for $PY"; exit 1; }
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail=0
+# env -i strips PATH (what these tests control) but keeps the per-user variables Python needs to find its own
+# packages: the Windows Store Python keeps PyYAML under %LOCALAPPDATA%, and without it the gate rightly denies E0.
+KEEP=(); for v in HOME USERPROFILE LOCALAPPDATA APPDATA SYSTEMROOT WINDIR TEMP TMP; do [ -n "${!v:-}" ] && KEEP+=("$v=${!v}"); done
 expect() { if [ "$2" = "$3" ]; then echo "PASS  $1"; else echo "FAIL  $1 (expected $2, got $3)"; fail=1; fi; }
 wrap() { # dir name script-body: a tiny executable, portable to Git Bash (no symlinks)
   printf '#!%s\n%s\n' "$SH" "$3" > "$1/$2"; chmod +x "$1/$2"
@@ -21,7 +24,7 @@ bin() { # fresh PATH dir with the utilities the launcher needs and nothing else
 }
 run() { # path-dir project-dir json [FIELD_MANIFEST] -> "exit|stdout"
   local out rc
-  out=$(printf %s "$3" | env -i PATH="$1" CLAUDE_PROJECT_DIR="$2" ${4:+FIELD_MANIFEST="$4"} "$SH" "$L" 2>/dev/null); rc=$?
+  out=$(printf %s "$3" | env -i "${KEEP[@]}" PATH="$1" CLAUDE_PROJECT_DIR="$2" ${4:+FIELD_MANIFEST="$4"} "$SH" "$L" 2>/dev/null); rc=$?
   printf '%s|%s' "$rc" "$out"
 }
 ALLOW='{"session_id":"l1","tool_name":"Bash","tool_input":{"command":"ls -la"}}'
@@ -38,7 +41,7 @@ r=$(run "$B" "$FREE" "$ALLOW"); expect "no Python, no manifest -> allow" 0 "${r%
 r=$(run "$B" "$T" "$ALLOW" gov/field-manifest.yaml); expect "no Python + relative FIELD_MANIFEST -> deny" 2 "${r%%|*}"
 r=$(run "$B" "$FREE" "$ALLOW" "$GOV/field-manifest.yaml"); expect "no Python + absolute FIELD_MANIFEST -> deny" 2 "${r%%|*}"
 r=$(run "$B" "$GOV" "$ALLOW" missing.yaml); expect "no Python + FIELD_MANIFEST pointing nowhere -> allow" 0 "${r%%|*}"
-r=$(printf %s "$ALLOW" | (cd "$GOV" && env -i PATH="$B" "$SH" "$L" >/dev/null 2>&1); echo $?)
+r=$(printf %s "$ALLOW" | (cd "$GOV" && env -i "${KEEP[@]}" PATH="$B" "$SH" "$L" >/dev/null 2>&1); echo $?)
 expect "no Python, no CLAUDE_PROJECT_DIR, cwd has manifest -> deny" 2 "$r"
 
 # 2. Store-alias stub (reads stdin, exits 9009 -> 49 under a POSIX shell) and Python 2 (exit 1), real python last
@@ -94,9 +97,9 @@ r=$(run "$B" "$FREE" "$ALLOW"); expect "gate killed mid-run, no manifest -> allo
 # 7. a missing field-gate.py (Python would exit 2 for it) is not taken as a verdict
 mkdir -p "$T/lonely"; cp "$L" "$T/lonely/"
 B=$(bin); wrap "$B" python3 "exec \"$PY\" \"\$@\""
-r=$(printf %s "$ALLOW" | env -i PATH="$B" CLAUDE_PROJECT_DIR="$FREE" "$SH" "$T/lonely/field-gate.sh" 2>/dev/null; echo "|$?")
+r=$(printf %s "$ALLOW" | env -i "${KEEP[@]}" PATH="$B" CLAUDE_PROJECT_DIR="$FREE" "$SH" "$T/lonely/field-gate.sh" 2>/dev/null; echo "|$?")
 expect "missing gate file, no manifest -> allow" 0 "${r##*|}"
-r=$(printf %s "$ALLOW" | env -i PATH="$B" CLAUDE_PROJECT_DIR="$GOV" "$SH" "$T/lonely/field-gate.sh" 2>/dev/null; echo "|$?")
+r=$(printf %s "$ALLOW" | env -i "${KEEP[@]}" PATH="$B" CLAUDE_PROJECT_DIR="$GOV" "$SH" "$T/lonely/field-gate.sh" 2>/dev/null; echo "|$?")
 expect "missing gate file + manifest -> deny E0" 2 "${r##*|}"
 
 # 8. the gate itself: an exception outside main()'s handlers (here: in the manifest lookup) exits 2, not 1
