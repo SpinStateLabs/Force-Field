@@ -42,9 +42,11 @@ That's the whole install. Install FORCE too if you haven't — FIELD wraps it:
 
 The **Enforcement Gate** (`hooks/`, a `PreToolUse` hook) is registered only by this method — plugin
 hooks load from the plugin root. Methods B and C install the skill and command only; they do not
-enforce anything. The gate needs `python3` and PyYAML (`pip install pyyaml`) on PATH. On Windows
-make sure `python3` resolves (the Microsoft Store alias or a `python3.exe` shim); if the hook
-command cannot start, Claude Code treats it as a non-blocking error and nothing is enforced.
+enforce anything. The gate needs a POSIX `sh` (Git Bash on Windows) and Python 3 with PyYAML
+(`pip install pyyaml`). The launcher (`hooks/field-gate.sh`, 1.2.4+) tries `python3`, then `py -3`,
+then `python`; when none can run the gate in a project with a manifest, every gated call is denied
+with E0 (no ledger record, since nothing could write it). On Windows without Git Bash, Claude Code
+runs hooks in PowerShell, `sh` does not start, and nothing is enforced: install Git for Windows.
 
 ---
 

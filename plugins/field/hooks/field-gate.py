@@ -37,7 +37,9 @@ Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project di
                           File-tool records carry `path`: root-relative inside the project,
                           sha256:<hex> outside it (no plaintext absolute paths).
 
-Exit 0 = allow. Exit 2 = deny (stderr line + JSON permissionDecision surfaced to the model).
+Exit 0 = allow. Exit 2 = deny (stderr line + JSON permissionDecision surfaced to the model). No other exit
+once this file runs, short of the process being killed: field-gate.sh retries another interpreter only on
+an exit of 1-127 other than 2, which means this file never ran.
 Fail-closed: with a manifest present, an unreadable manifest, missing PyYAML, a misconfigured
 kill switch, hook input over MAX_INPUT_BYTES, a shell command over MAX_COMMAND_BYTES, a check that
 runs past TIME_BUDGET_S (the hooks.json timeout would otherwise kill the hook, which fails open),
@@ -391,9 +393,21 @@ def gate_lock(root):
 
 
 def emit_deny(rule, reason):
-    sys.stderr.write(f"FIELD DENY [{rule}]: {reason}\n")
-    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
-          "permissionDecision": "deny", "permissionDecisionReason": f"[{rule}] {reason}"}}))
+    # Exit 2 must survive a closed stdout or stderr (Claude Code gone, the hook timed out): any other exit is
+    # non-blocking, and field-gate.sh would read it as "this Python never ran the gate" and retry.
+    try:
+        sys.stderr.write(f"FIELD DENY [{rule}]: {reason}\n")
+        sys.stderr.flush()
+    except Exception:
+        pass
+    try:
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+              "permissionDecision": "deny", "permissionDecisionReason": f"[{rule}] {reason}"}}), flush=True)
+    except Exception:
+        try:  # point fd 1 at devnull so the exit-time flush of the unsent buffer cannot fail (exit 120)
+            os.dup2(os.open(os.devnull, os.O_WRONLY), 1)
+        except OSError:
+            pass
     sys.exit(2)
 
 
@@ -880,4 +894,12 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # Once the gate runs it exits 0 or 2 only; field-gate.sh relies on this to tell "ran" from "never started".
+    try:
+        main()
+    except SystemExit as exc:
+        if exc.code not in (0, 2):
+            os._exit(2)
+        raise
+    except BaseException:  # an error before main()'s own handlers, KeyboardInterrupt: deny, never exit 1
+        os._exit(2)
