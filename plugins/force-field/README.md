@@ -60,8 +60,9 @@ hooks, scripts, MCP servers, or network calls, and it reads no credentials.
 **Its dependencies:**
 
 - `force` — instructions only. Reads and writes a local state file, `~/.claude/state/force.json`.
-- `field` — instructions plus the **Enforcement Gate**, a `PreToolUse` hook that runs `python3`
-  locally (`hooks/field-gate.py`) on Bash, Edit, Write, MultiEdit, and NotebookEdit calls. When a
+- `field` — instructions plus the **Enforcement Gate**, a `PreToolUse` hook that runs locally
+  (`hooks/field-gate.sh` starts `hooks/field-gate.py` with Python 3) on every tool call except
+  Read, Glob, Grep, LS, NotebookRead and TodoWrite. When a
   `./field-manifest.yaml` exists, it can deny tool calls (kill switch, protected paths, irreversible
   actions, tool-call budget) and appends each decision to a local hash-chained ledger
   (`.claude/state/field-ledger.jsonl` by default). It requires PyYAML and makes no network calls.

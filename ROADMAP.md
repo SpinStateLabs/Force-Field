@@ -160,7 +160,7 @@ The public commitment in v1.0 was "enforcement in v1.1". v1.1 delivers it inside
 ### Enforcement Gate v1.2 (next plugin release)
 
 - **Policy-driven verdicts** — `irreversible_action_policy` → deny / ask / allow-with-ledger.
-- **A locked call counter** and a `kill_switch.local_sentinel` alongside an estate endpoint.
+- **A `kill_switch.local_sentinel`** alongside an estate endpoint. (The locked call counter shipped in 1.2.0.)
 - **FORCE + FIELD runtime composition** — automatic FORCE application inside FIELD-declared agents.
 - **Ledger reference implementations** — sample stores (s3, Postgres) with cryptographic sealing wired.
 - **Additional FIELD templates** — for agents Spin State clients ask about.

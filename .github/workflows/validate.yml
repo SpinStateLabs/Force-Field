@@ -109,3 +109,5 @@ jobs:
           echo "$out" | grep -q "LEDGER INTACT"
       - name: E5 and ledger-path tests
         run: bash plugins/field/hooks/test/run_e5.sh
+      - name: Launcher tests (no Python, stub Python, fallbacks)
+        run: bash plugins/field/hooks/test/run_launcher.sh

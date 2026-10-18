@@ -12,9 +12,32 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 - FORCE v1.1 refinements based on real-world usage feedback.
 - FIELD refinements: manifest examples per pillar, reference architectures; possible reference implementation of runtime enforcement in n8n.
-- Enforcement Gate, next: policy-driven verdicts (`irreversible_action_policy` → deny / ask / allow-with-ledger), a locked call counter, a `kill_switch.local_sentinel` alongside an estate endpoint.
+- Enforcement Gate, next: policy-driven verdicts (`irreversible_action_policy` → deny / ask / allow-with-ledger), a `kill_switch.local_sentinel` alongside an estate endpoint. (The locked call counter shipped in 1.2.0.)
 - Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
 - FORCE + FIELD runtime composition — automatic FORCE application inside FIELD-declared agents.
+
+---
+
+## field — 1.2.4 / marketplace — 1.4.4 — 2026-10-18
+
+### Fixed
+
+- **The gate failed open when Python could not start (high).** `hooks.json` ran `python3` directly. Claude Code treats a hook exit other than 0 or 2 as a non-blocking error and runs the tool, so with no `python3` on PATH (exit 127), or with only the Windows Store alias stub (exit 9009; a python.org install provides `python` and `py`, not `python3`), nothing was enforced and nothing was ledgered, silently. `hooks.json` now runs `sh "${CLAUDE_PLUGIN_ROOT}/hooks/field-gate.sh"`, a POSIX launcher that tries `python3`, then `py -3`, then `python`, with the hook input replayed to each. Exit 0 or 2 is the gate's verdict and passes through; an exit of 1-127 means that interpreter never ran the gate, so the next is tried; 128 or more means the gate was killed mid-run, so nothing is retried (a retry could count the call twice). With no verdict, the call is denied with E0 when the project has a manifest and allowed when it has none, so a missing Python does not block projects that are not FIELD-governed. A missing `field-gate.py` (Python exits 2 for it) is no longer taken as a deny verdict. Decision record: force-field-agentic-harness ADR-0070.
+- **The gate could exit 1 after it ran (medium).** An exception outside `main()`'s handlers (for example in the manifest lookup) exited 1, which is non-blocking: fail-open in a governed project. A deny whose stdout write failed (Claude Code gone, the hook timed out) also exited 1, after the ledger record was written. `field-gate.py` now exits only 0 or 2 once it runs: a `__main__` guard maps anything else to 2, and `emit_deny` survives a closed stdout or stderr. The launcher's retry rule depends on this.
+- `.gitattributes` keeps `*.sh` at LF on every checkout: a CRLF `field-gate.sh` is a syntax error (exit 2) under `sh` and would block every gated call in every project.
+
+### Known limits
+
+- An E0 denial from the launcher leaves no ledger record (nothing could write it).
+- Claude Code on Windows without Git Bash runs hooks in PowerShell, where `sh` does not start: still a non-blocking error, nothing enforced. Install Git for Windows. Claude Code 2.1.295+ documents `"onFailure": "block"` for this case, but on any host where the hook cannot start it would also block every project without a manifest; not adopted (ADR-0070).
+- The launcher looks for the manifest under `$CLAUDE_PROJECT_DIR`, else its working directory; unlike `field-gate.py` it does not read the hook input's `cwd`. `FIELD_MANIFEST` starting with `/`, `\` or `\\`, or a drive letter, is taken as absolute.
+- A program named `py` or `python` that is not Python and happens to exit 0 or 2 would be trusted.
+
+### Verification
+
+- `bash hooks/test/run_launcher.sh`: 25/25. Covers: no interpreter with and without a manifest; `FIELD_MANIFEST` relative, absolute and missing; a Store-style stub that consumes stdin and exits 49 plus a broken `py`, then `python` runs the gate with the input intact and one ledger record per call; `py -3`; pass-through of allow and deny; a 200 KB input; a deny whose stdout reader is gone (exit 2, one ledger record, no retry); a gate killed after it ran (E0, one record, no retry); a missing `field-gate.py`; an exception outside `main()`'s handlers (exit 2). Without the `field-gate.py` change, the closed-stdout case writes two ledger records and the exception case exits 1. `run.sh` and `run_e5.sh` unchanged and passing. Python 3.13, dash, Linux.
+- Live, headless Claude Code 2.1.302 on Linux (`--plugin-dir`, `bypassPermissions`), final build: with Python, a destructive command is denied and `echo hi` is allowed and ledgered; with Python removed from PATH, `echo hi` is denied with E0 in a project with a manifest and allowed in one without. The 1.2.3 `hooks.json` under the same Python-free PATH ran `echo hi` with no ledger: the failure reproduced. In 2.1.302 a hook denial also appears in `permission_denials`.
+- Windows not yet run for this release (`hooks/test/check_host.sh`, from Git Bash, is the check to run there).
 
 ---
 
