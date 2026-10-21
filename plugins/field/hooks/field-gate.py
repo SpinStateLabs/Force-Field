@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """
-FIELD Enforcement Gate — Claude Code PreToolUse hook (field plugin v1.3).
+FIELD Enforcement Gate — Claude Code PreToolUse hook (field plugin v1.4).
 
 Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project directory
 ($CLAUDE_PROJECT_DIR, else the hook input's cwd, else the process cwd) and enforces:
   Gated tools: every tool except the read-only UNGATED set (Read, Glob, Grep, LS, NotebookRead,
   TodoWrite). Shell tools are Bash and PowerShell. MCP and other tools get E1, E2, E4 and L.
-  E1  kill switch      -> deny ALL gated tool calls while the sentinel file exists.
+  E1  kill switch      -> deny ALL gated tool calls while a sentinel file exists.
                           Sentinel = enforcement.kill_switch.endpoint when method is `file`;
-                          otherwise the default .claude/state/KILL.
+                          otherwise the default .claude/state/KILL. Also (field 1.4+)
+                          enforcement.kill_switch.local_sentinel, a second file that a HOST WATCHER
+                          creates when the estate kills the agent and removes on revive (the gate
+                          itself makes no network call). With the opt-in sentinel_max_age_s the gate
+                          also denies when the watcher's liveness stamp, <local_sentinel>.alive, is
+                          missing or older than that many seconds. Both files are E2-protected.
   E2  protected paths  -> deny any gated tool touching governance files: the manifest,
                           .claude/settings*.json, hooks.json, the ledger, the call counter, the
                           project's whole .claude/state/ directory (except the kill sentinel, which
@@ -101,6 +106,8 @@ POLICY_VERDICT = {"forbid": "deny", "require_human_approval": "ask", "allow_with
 # 2.1.306, interactive; ADR-0071 Implementation). Under `claude -p` Claude Code itself turns "ask" into a deny.
 # Any other or missing value: the gate cannot tell a prompt will reach anyone, so it denies instead.
 ASK_MODES = {"default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}
+STAMP_SUFFIX = ".alive"   # the estate watcher's liveness stamp sits beside local_sentinel
+FUTURE_SKEW_S = 60        # a stamp dated further ahead than this is forged or a broken clock: not fresh
 # Interpreters whose first non-flag argument is a script path (E5).
 INTERPRETER_RE = re.compile(
     r"^(?:(?:ba|z|da|k)?sh|source|\.|python(?:\d+(?:\.\d+)?)?|node|deno|bun|ruby|perl|php|"
@@ -173,6 +180,25 @@ def kill_switch_path(enf, base):
             return resolve_path(endpoint, base), "manifest", None
         return None, None, "kill_switch.method is 'file' but endpoint is not a file path"
     return base / DEFAULT_KILL, "default", None
+
+
+def estate_sentinel(enf, base):
+    """(sentinel, stamp, max_age_s, error) for kill_switch.local_sentinel (ADR-0072). All None when the
+    manifest sets neither key. The stamp is the file beside the sentinel with STAMP_SUFFIX appended."""
+    ks = enf.get("kill_switch") or {}
+    if not isinstance(ks, dict):
+        return None, None, None, None
+    raw, age = ks.get("local_sentinel"), ks.get("sentinel_max_age_s")
+    if raw is None and age is None:
+        return None, None, None, None
+    if raw is None:
+        return None, None, None, "kill_switch.sentinel_max_age_s needs kill_switch.local_sentinel"
+    if not is_pathlike(raw):
+        return None, None, None, "kill_switch.local_sentinel is not a file path"
+    if age is not None and (isinstance(age, bool) or not isinstance(age, int) or age < 1):
+        return None, None, None, "kill_switch.sentinel_max_age_s must be an integer of 1 or more"
+    sentinel = resolve_path(raw, base)
+    return sentinel, sentinel.with_name(sentinel.name + STAMP_SUFFIX), age, None
 
 
 def resolve_store(manifest, base):
@@ -808,6 +834,25 @@ def enforce(inp, manifest, root, ledger_path, store_source):
     if flag.exists():
         # path_key, not the raw path: an absolute sentinel path would put a username in the ledger.
         deny(ledger_path, event, "E1", f"kill switch tripped ({path_key(flag, root)}); all tool calls halted")
+    # E1, estate form: the file a host watcher keeps in step with the estate kill switch (ADR-0072).
+    estate, stamp, max_age, err = estate_sentinel(enf, root)
+    if err:
+        deny(ledger_path, event, "E0", f"{err}; fail-closed")
+    if estate is not None:
+        if estate.exists():
+            deny(ledger_path, event, "E1",
+                 f"estate kill sentinel present ({path_key(estate, root)}); all tool calls halted")
+        if max_age is not None:
+            try:
+                age = time.time() - stamp.stat().st_mtime
+            except OSError:
+                deny(ledger_path, event, "E1",
+                     f"estate heartbeat stamp missing ({path_key(stamp, root)}); the watcher is not running; "
+                     "all tool calls halted")
+            if age > max_age or age < -FUTURE_SKEW_S:
+                deny(ledger_path, event, "E1",
+                     f"estate heartbeat stale (stamp older than {max_age} s or dated in the future); "
+                     "the watcher is not running; all tool calls halted")
 
     # Size cap: E2/E3/E5 scan the command text and a scan that outlives the hook timeout fails open.
     if tool in SHELL_TOOLS and len(shell_command(tool, ti).encode("utf-8")) > MAX_COMMAND_BYTES:
@@ -824,6 +869,12 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         protected.append((re.escape(a) + "$", label))
         if a.startswith(rootn + "/"):
             protected.append((re.escape(a[len(rootn) + 1:]) + "$", label))
+    for p, label in ((estate, "the estate kill sentinel"), (stamp, "the estate heartbeat stamp")):
+        if p is not None:
+            a, rootn = _abs_norm(p, root)
+            protected.append((re.escape(a) + "$", label))
+            if a.startswith(rootn + "/"):
+                protected.append((re.escape(a[len(rootn) + 1:]) + "$", label))
     protected += [(str(p), str(p)) for p in (enf.get("protected_paths") or [])]
     try:
         rules = [(re.compile(_lean(pat), re.IGNORECASE), label) for pat, label in protected]
@@ -835,6 +886,8 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         (manifest_path(root), "the manifest"), (ledger_path, "the ledger"), (counter, "the call counter"),
         (STATE_DIR, "the state directory"), (".claude/settings.json", ".claude/settings.json"),
         (".claude/settings.local.json", ".claude/settings.local.json"))]
+    names += [(_abs_norm(p, root)[0], label) for p, label in
+              ((estate, "the estate kill sentinel"), (stamp, "the estate heartbeat stamp")) if p is not None]
 
     def hits(word):  # does one shell word name a governance path (cp/install destination test)
         return (any(rx.search(f) for f in _path_forms(word, root) for rx, _l in rules)

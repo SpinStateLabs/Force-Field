@@ -12,9 +12,25 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 - FORCE v1.1 refinements based on real-world usage feedback.
 - FIELD refinements: manifest examples per pillar, reference architectures; possible reference implementation of runtime enforcement in n8n.
-- Enforcement Gate, next: a `kill_switch.local_sentinel` alongside an estate endpoint. (The locked call counter shipped in 1.2.0.)
 - Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
 - FORCE + FIELD runtime composition — automatic FORCE application inside FIELD-declared agents.
+
+---
+
+## field — 1.4.0 / marketplace — 1.6.0 — 2026-10-21
+
+### Added
+
+- **Estate kill reaches a governed session (ADR-0072, harness repo).** New optional keys `enforcement.kill_switch.local_sentinel` (a path) and `enforcement.kill_switch.sentinel_max_age_s` (integer, opt-in). While the `local_sentinel` file exists the gate denies every gated call (E1), whatever the kill method. A host watcher, `tools/estate_kill_watcher.py` in field-platform (not in this plugin), polls the estate `GET /heartbeat/{agent_id}` and creates or removes that file, so the hook stays local and fast and makes no network call. With `sentinel_max_age_s` the gate also denies when the watcher's liveness stamp `<local_sentinel>.alive` is missing, older than that many seconds, or dated in the future. Schema revision 1.4.0, additive; templates unchanged.
+- The sentinel and the stamp are E2-protected, so the agent cannot delete, backdate or recreate them (Bash, file tools, MCP).
+- `hooks/test/run_estate_kill.sh` (57 checks) runs in the `gate-tests` CI job.
+
+### Known limits
+
+- Without the watcher running the key does nothing; without `sentinel_max_age_s` a watcher that is down silently drops a kill (fail-open). The stamp only proves the watcher polled recently, not that the estate was reachable for the whole window.
+- Kill latency is bounded by the watcher's poll interval.
+- Needs the field-core lockstep in field-platform (`KillSwitch` is `extra="forbid"`) before an estate accepts a manifest carrying the keys.
+- Not run on Windows: the watcher is a Python tool meant for a scheduled task on the host.
 
 ---
 

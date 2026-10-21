@@ -164,6 +164,8 @@ manifest exists in the project directory. Conventions (full detail in `skills/fi
 
 - Sentinel file: `enforcement.kill_switch.endpoint` when `method` is `file`; otherwise
   `.claude/state/KILL`. Relative paths resolve against the manifest directory.
+- Estate kill (1.4+): `enforcement.kill_switch.local_sentinel` is a second sentinel that a host watcher creates/removes in step with
+  the estate kill switch; opt-in `sentinel_max_age_s` denies when the watcher's `<local_sentinel>.alive` stamp is stale or missing.
 - Ledger file: `ledger.store` when path-like (`file://…`, a path containing a separator, `~/…`, or
   a bare `*.jsonl`); otherwise `.claude/state/field-ledger.jsonl`.
 - Budget: the `enforcement.rate_limits` entry `{action: tool_call, period: session}`.

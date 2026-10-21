@@ -91,6 +91,14 @@ defer, and how much it may spend.
     directory); while the file exists every gated tool call is denied (E1). Any other method
     keeps its meaning for your infrastructure and the gate uses the default sentinel
     `.claude/state/KILL`.
+  - `kill_switch.local_sentinel` (field 1.4+) is a second sentinel path for an estate kill: a host
+    watcher (field-platform `tools/estate_kill_watcher.py`) polls the estate heartbeat and creates
+    this file when the agent is killed and removes it on revive; while it exists every gated tool
+    call is denied (E1). The gate makes no network call. Opt-in `kill_switch.sentinel_max_age_s`
+    also denies when the watcher's liveness stamp `<local_sentinel>.alive` is missing, older than
+    that many seconds or dated in the future, so a dead watcher cannot silently drop a kill. Without
+    the watcher the key does nothing, and without `sentinel_max_age_s` a watcher that is down is
+    fail-open. Both files are E2-protected.
   - The `rate_limits` entry `{action: tool_call, max: N, period: session}` is the per-session
     tool-call budget (E4) — a runtime proxy for `spend_cap`, not a currency meter.
   - Gated tools (1.2+): every tool except Read, Glob, Grep, LS, NotebookRead and TodoWrite,

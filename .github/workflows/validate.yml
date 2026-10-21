@@ -48,6 +48,19 @@ jobs:
             echo "schema accepted an invalid deny_patterns_verdict"; exit 1
           fi
 
+      - name: Validate the kill_switch local_sentinel keys (positive and negative)
+        run: |
+          schema=plugins/field/skills/field/manifest-schema.json
+          fixture=plugins/field/hooks/test/field-manifest.yaml
+          sed 's/^    method: file$/    method: file\n    local_sentinel: .claude\/state\/ESTATE_KILL\n    sentinel_max_age_s: 30/' "$fixture" > "$RUNNER_TEMP/sentinel-ok.yaml"
+          grep -q '^    sentinel_max_age_s: 30$' "$RUNNER_TEMP/sentinel-ok.yaml" || { echo "positive case not constructed"; exit 1; }
+          npx ajv validate --spec=draft2020 -c ajv-formats -s "$schema" -d "$RUNNER_TEMP/sentinel-ok.yaml" || exit 1
+          sed 's/sentinel_max_age_s: 30/sentinel_max_age_s: 0/' "$RUNNER_TEMP/sentinel-ok.yaml" > "$RUNNER_TEMP/sentinel-bad.yaml"
+          grep -q 'sentinel_max_age_s: 0$' "$RUNNER_TEMP/sentinel-bad.yaml" || { echo "negative case not constructed"; exit 1; }
+          if npx ajv validate --spec=draft2020 -c ajv-formats -s "$schema" -d "$RUNNER_TEMP/sentinel-bad.yaml"; then
+            echo "schema accepted sentinel_max_age_s: 0"; exit 1
+          fi
+
       - name: Validate marketplace.json structure
         run: |
           echo "Checking .claude-plugin/marketplace.json exists..."
@@ -139,3 +152,5 @@ jobs:
         run: bash plugins/field/hooks/test/run_launcher.sh
       - name: E3 policy-verdict tests (ADR-0071)
         run: bash plugins/field/hooks/test/run_e3_policy.sh
+      - name: Estate kill sentinel tests (ADR-0072)
+        run: bash plugins/field/hooks/test/run_estate_kill.sh
