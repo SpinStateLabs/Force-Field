@@ -66,6 +66,20 @@ if is_windows; then echo "SKIP  E5 symlinked project root (Windows)"; else
   expect "E5 deny: bash <symlink-to-root>/x.sh" 2 "$(call t1 Bash '{"command":"bash '"$L"'/rootlink/x.sh"}')"
   rm -rf "$L"
 fi
+# a read-only tool configured to run a session-written file (field 1.2.5): the tool's own arguments are
+# not checked, but a program or config value handed to it, or an environment assignment, is
+pj() { python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "$1"; }
+for c in 'git -c alias.r=!./x.sh r' 'git -calias.r=!./x.sh r' "git config alias.r '!./x.sh'" 'git -c core.pager=./x.sh log' \
+         'git -c core.sshCommand=./x.sh fetch' 'rg --pre ./x.sh pat .' 'rg --pre=./x.sh pat .' \
+         'GIT_EXTERNAL_DIFF=./x.sh git diff' 'env GIT_EXTERNAL_DIFF=./x.sh git diff' 'GIT_PAGER=./x.sh git log' \
+         "LESSOPEN='|./x.sh %s' less notes.txt" 'FOO=1 BAR=./x.sh cat notes.txt'; do
+  expect "E5 deny (configured exec): $c" 2 "$(call t1 Bash "$(pj "$c")")"
+done
+for c in 'git -c core.quotepath=false log' 'git log --oneline' 'rg --pre cat pat x.sh' 'LC_ALL=C grep a x.sh' 'git diff x.sh' \
+         'FOO=bar ls' 'rg -c pat x.sh' 'git commit -m "see x.sh"' 'GIT_PAGER=cat git log' 'git -c core.pager=less log'; do
+  expect "allow (configured exec controls): $c" 0 "$(call t1 Bash "$(pj "$c")")"
+done
+expect "other session may run t1's configured-exec forms" 0 "$(call t2 Bash "$(pj 'GIT_EXTERNAL_DIFF=./x.sh git diff')")"
 # ledger: paths logged, root-relative, no plaintext absolute path
 python3 - "$HERE" "$(abspath "$HERE")" <<'PY'
 import json,sys

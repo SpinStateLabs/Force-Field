@@ -18,6 +18,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
+## field — 1.2.5 / marketplace — 1.4.5 — 2026-10-20
+
+### Fixed
+
+- **E5 no longer trusts what a read-only tool is configured to run (medium).** E5 skips the arguments of the read-only tools (`cat`, `git`, `rg`, ...), so a session-written file could still be run through one of them when the tool was told to execute it: through an option that takes a program or a config value, or through an environment variable. E5 now also checks, in every simple command, the value of a `VAR=value` assignment (including after `env`), an attached option value (`--opt=value`, `-cKEY=value`), the argument of `-c`, `--pre`, `--hostname-bin`, `--config-env`, `--exec-path`, `--upload-pack` and `--receive-pack`, and any word that starts with `!`. The tools' ordinary arguments are still not checked, so reading a file you wrote (`cat x.sh`, `git diff x.sh`, `rg pattern x.sh`) stays allowed. E5 is opt-in (`session_written_exec: deny`); the default is unchanged.
+- `hooks/test/run_e5.sh` gains cases for each form with controls that must stay allowed.
+
+### Known limits
+
+- Unchanged: E5 matches command text, not process execution. A tool configured outside the command (a repository's own config or hooks) is not seen; regex matching is a tripwire, not a sandbox.
+
+---
+
 ## field — 1.2.4 / marketplace — 1.4.4 — 2026-10-18
 
 ### Fixed

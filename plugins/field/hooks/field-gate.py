@@ -321,6 +321,39 @@ def _command_index(seg):
     return i if i < len(seg) else None
 
 
+ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=(.*)$", re.S)
+# Options that hand a program or a config value to the tool they belong to.
+EXEC_VALUE_FLAGS = {"-c", "--pre", "--hostname-bin", "--config-env", "--exec-path", "--upload-pack", "--receive-pack"}
+
+
+def _value_forms(value):
+    """The value, and the pieces of it a path can hide in (KEY=!path, a:b lists)."""
+    value = value.lstrip("!")
+    return [value] + [p for p in re.split(r"[=!:;,|\s]+", value) if p]
+
+
+def indirect_exec_tokens(seg):
+    """Words in one simple command that a tool can be told to run: the value of a VAR=value
+    assignment, an attached option value (--opt=value, -cKEY=value), the argument of an option in
+    EXEC_VALUE_FLAGS, and a !-prefixed word. A read-only tool's own arguments are not checked, but
+    what it is configured to execute is."""
+    out, prev = [], ""
+    for t in seg:
+        m = ASSIGN_RE.match(t)
+        if m:
+            out.extend(_value_forms(m.group(1)))
+        elif t.startswith("--") and "=" in t:
+            out.extend(_value_forms(t.split("=", 1)[1]))
+        elif t.startswith("-c") and len(t) > 2:
+            out.extend(_value_forms(t[2:]))
+        elif prev in EXEC_VALUE_FLAGS:
+            out.extend(_value_forms(t))
+        if t.startswith("!"):
+            out.extend(_value_forms(t))
+        prev = t
+    return out
+
+
 def exec_suspect_tokens(cmd, depth=0, root=None, written=None):
     """Tokens that may be executed. Fail-closed: every token of a segment whose command word is
     not a known read-only tool, plus every token of a command that pipes/redirects into an interpreter.
@@ -330,6 +363,7 @@ def exec_suspect_tokens(cmd, depth=0, root=None, written=None):
     out = []
     interp_anywhere = False
     for seg in segs:
+        out.extend(indirect_exec_tokens(seg))
         i = _command_index(seg)
         if i is None:
             continue
