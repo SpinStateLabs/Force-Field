@@ -12,9 +12,26 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 - FORCE v1.1 refinements based on real-world usage feedback.
 - FIELD refinements: manifest examples per pillar, reference architectures; possible reference implementation of runtime enforcement in n8n.
-- Enforcement Gate, next: a `kill_switch.local_sentinel` alongside an estate endpoint. (The locked call counter shipped in 1.2.0.)
 - Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
 - FORCE + FIELD runtime composition — automatic FORCE application inside FIELD-declared agents.
+
+---
+
+## field — 1.4.0 / marketplace — 1.6.0 — 2026-10-21
+
+### Added
+
+- **Estate kill reaches a governed session (ADR-0072, harness repo).** New optional keys `enforcement.kill_switch.local_sentinel` (a path) and `enforcement.kill_switch.sentinel_max_age_s` (integer, opt-in). While the `local_sentinel` file exists the gate denies every gated call (E1), whatever the kill method. A host watcher, `tools/estate_kill_watcher.py` in field-platform (not in this plugin), polls the estate `GET /heartbeat/{agent_id}` and creates or removes that file, so the hook stays local and fast and makes no network call. With `sentinel_max_age_s` the gate also denies when the watcher's liveness stamp `<local_sentinel>.alive` is missing, older than that many seconds, or dated in the future. Schema revision 1.4.0, additive; templates unchanged.
+- The sentinel and the stamp are E2-protected against the agent's tools: the exact paths (file tools, MCP, Bash words and redirects, globs), the stamp's and the sentinel's file names wherever they are written from (not the default `KILL` under `.claude/state/`, which `/field kill` creates) (`cd estate && touch X.alive`, `$dir/X.alive`, a symlinked directory), and `rm`/`mv` of the directory they sit in. `touch` joins the mutating commands E2 expands globs for. The stamp is trusted by its mtime, so a stale stamp is refreshed by anything that touches it: put `local_sentinel` under `.claude/state/` (for example `.claude/state/ESTATE_KILL`), where the whole directory is already protected, unless you have a reason not to. A stamp dated more than 60 s ahead counts as not fresh. An estate sentinel that cannot be examined (a parent directory without the execute bit) counts as present.
+- `hooks/test/run_estate_kill.sh` (117 checks) runs in the `gate-tests` CI job. Its first review (a separate read-only session) broke the first draft with `cd estate && touch KILL.alive`; those forms are now tests.
+
+### Known limits
+
+- Without the watcher running the key does nothing; without `sentinel_max_age_s` a watcher that is down silently drops a kill (fail-open). The stamp only proves the watcher polled recently, not that the estate was reachable for the whole window.
+- Kill latency is bounded by the watcher's poll interval.
+- The sentinel and the stamp are protected by E2, so they share E2's limits: regex matching of command text is a tripwire, not a sandbox. A program the agent runs that sets the stamp's mtime without naming the file (`python3 -c "os.utime(...)"`, `find estate -exec touch {} +`) is not caught: the stamp is a tripwire against an honest agent, not a defence against a determined one.
+- Needs the field-core lockstep in field-platform (`KillSwitch` is `extra="forbid"`) before an estate accepts a manifest carrying the keys.
+- Not run on Windows: the watcher is a Python tool meant for a scheduled task on the host.
 
 ---
 
