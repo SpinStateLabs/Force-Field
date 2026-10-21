@@ -129,12 +129,12 @@
             "local_sentinel": {
           "type": "string",
           "minLength": 1,
-          "description": "Estate kill via a local file (Enforcement Gate, field 1.4+). A path (it must contain a separator or start with ~; relative paths resolve against the project root) to a sentinel file that a HOST WATCHER (field-platform tools/estate_kill_watcher.py) creates when the estate kill-switch reports the agent killed and removes on revive. While it exists the gate denies every gated call (E1), in addition to the default sentinel or the `file` endpoint. The gate makes no network call. Both this file and its liveness stamp (<local_sentinel>.alive) are E2-protected against the agent."
+          "description": "Estate kill via a local file (Enforcement Gate, field 1.4+). A path (it must contain a separator or start with ~; a file:// prefix is accepted; relative paths resolve against the project root, which is where the manifest sits). Prefer a path under .claude/state/, which E2 already protects as a whole directory to a sentinel file that a HOST WATCHER (field-platform tools/estate_kill_watcher.py) creates when the estate kill-switch reports the agent killed and removes on revive. While it exists the gate denies every gated call (E1), in addition to the default sentinel or the `file` endpoint. The gate makes no network call. Both this file and its liveness stamp (<local_sentinel>.alive) are E2-protected against the agent."
         },
         "sentinel_max_age_s": {
           "type": "integer",
           "minimum": 1,
-          "description": "Opt-in staleness check for local_sentinel (field 1.4+). The watcher refreshes <local_sentinel>.alive on every successful poll of the estate; when this key is set the gate denies every gated call (E1) if that stamp is missing, older than this many seconds, or dated in the future. Without it a watcher that is down silently drops a kill (fail-open). Requires local_sentinel; set it to more than twice the watcher's poll interval."
+          "description": "Opt-in staleness check for local_sentinel (field 1.4+). The watcher refreshes <local_sentinel>.alive on every successful poll of the estate; when this key is set the gate denies every gated call (E1) if that stamp is missing, older than this many seconds, or dated in the future. Without it a watcher that is down silently drops a kill (fail-open). Requires local_sentinel (the gate denies E0 if it is missing; the schema cannot express this); set it to more than twice the watcher's poll interval, plus the watcher's request timeout."
         },
         "authorized_operators": { "type": "array", "items": { "type": "string" } }
           }

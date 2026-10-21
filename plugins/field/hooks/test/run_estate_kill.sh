@@ -95,7 +95,7 @@ P=$(project bad1 "HTTP POST" "http://x/kill" - 30);                 r=$(bash_ "$
 P=$(project bad2 "HTTP POST" "http://x/kill" "NOSEP" -);             r=$(bash_ "$P" "ls"); expect "local_sentinel not a path -> E0" 2 "${r%%|*}"; has "E0 path" "$r" '[E0]'
 for bad in 0 -5 "'x'" true 1.5; do
   P=$(project "badage$RANDOM" "HTTP POST" "http://x/kill" "estate/K" "$bad"); r=$(bash_ "$P" "ls")
-  expect "sentinel_max_age_s=$bad -> E0" 2 "${r%%|*}"
+  expect "sentinel_max_age_s=$bad -> deny" 2 "${r%%|*}"; has "sentinel_max_age_s=$bad is E0, not a stale-stamp E1" "$r" '[E0]'
 done
 
 # 6. the agent cannot write, delete or backdate the sentinel or the stamp (E2), wherever they live
@@ -108,6 +108,27 @@ done
 r=$(call "$P" Write '{"file_path":"estate/ESTATE_KILL.alive","content":"x"}'); expect "E2 deny: Write the stamp" 2 "${r%%|*}"
 r=$(call "$P" Edit '{"file_path":"estate/ESTATE_KILL","old_string":"a","new_string":"b"}'); expect "E2 deny: Edit the sentinel" 2 "${r%%|*}"
 r=$(bash_ "$P" "ls estate"); expect "reading the estate dir is still fine" 0 "${r%%|*}"
+# 6b. the same, from another directory or through a variable / symlink / command substitution (review finding): the
+# stamp is protected by NAME, and the sentinel's directory cannot be removed or renamed
+P=$(project e2c "HTTP POST" "http://x/kill" "estate/ESTATE_KILL" 30)
+mkdir -p "$P/estate" "$P/other"; : > "$P/estate/ESTATE_KILL.alive"
+for c in 'cd estate && touch ESTATE_KILL.alive' '(cd estate && touch ESTATE_KILL.alive)' 'sh -c "cd estate; touch ESTATE_KILL.alive"' \
+         'a=estate; touch $a/ESTATE_KILL.alive' 'touch $(echo estate)/ESTATE_KILL.alive' 'ln -s estate lnk; touch lnk/ESTATE_KILL.alive' \
+         'cd estate && rm -f ESTATE_KILL.alive' 'cd estate && echo x > ESTATE_KILL.alive' 'cd estate; cp /dev/null ESTATE_KILL.alive' \
+         'touch estate/ESTATE_KILL.al*' 'rm estate/ESTATE_K*'; do
+  r=$(bash_ "$P" "$c"); expect "E2 deny: $c" 2 "${r%%|*}"; has "E2 rule: $c" "$r" '[E2]'
+done
+for c in 'rm -r estate' 'rm -rf estate/' 'rm -r ./estate' 'mv estate estate2' 'mv ./estate/ /tmp/x' 'rmdir estate'; do
+  r=$(bash_ "$P" "$c"); expect "E2 deny (sentinel directory): $c" 2 "${r%%|*}"; has "E2 rule (directory): $c" "$r" 'estate sentinel directory'
+done
+for c in 'ls estate' 'cd other && touch NOTES.md' 'rm -r other' 'mv other other2' 'touch estate/NOTES.md'; do
+  r=$(bash_ "$P" "$c"); expect "allow: $c" 0 "${r%%|*}"
+done
+P=$(project e2d "HTTP POST" "http://x/kill" ".claude/state/ESTATE_KILL" 30)
+mkdir -p "$P/.claude/state"; : > "$P/.claude/state/ESTATE_KILL.alive"
+for c in 'cd .claude/state && touch ESTATE_KILL.alive' 'cd .claude/state && rm -f ESTATE_KILL' 'a=.claude/state; touch $a/ESTATE_KILL.alive'; do
+  r=$(bash_ "$P" "$c"); expect "E2 deny (sentinel under .claude/state): $c" 2 "${r%%|*}"
+done
 P=$(project e2s "HTTP POST" "http://x/kill" ".claude/state/ESTATE_KILL" 30)
 mkdir -p "$P/.claude/state"; : > "$P/.claude/state/ESTATE_KILL.alive"
 r=$(bash_ "$P" "touch .claude/state/ESTATE_KILL.alive"); expect "E2 deny: stamp inside the state dir" 2 "${r%%|*}"

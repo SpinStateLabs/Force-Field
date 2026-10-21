@@ -201,6 +201,18 @@ def estate_sentinel(enf, base):
     return sentinel, sentinel.with_name(sentinel.name + STAMP_SUFFIX), age, None
 
 
+def present(path):
+    """True if `path` exists, and also when it cannot be examined (e.g. a parent directory without the
+    execute bit): an unreadable estate sentinel halts rather than passes."""
+    try:
+        path.stat()
+        return True
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+
+
 def resolve_store(manifest, base):
     """(ledger path, source). source is 'manifest' when ledger.store is path-like, else 'default'."""
     ledger = (manifest or {}).get("ledger") or {}
@@ -563,7 +575,8 @@ def text_tokens(text, depth=0):
 # governance path; of= values; all arguments when an in-place flag (-i, -pi, --in-place) is present.
 MUTATING = {"rm": "all", "rmdir": "all", "unlink": "all", "shred": "all", "mv": "all", "ln": "all",
             "tee": "all", "truncate": "all", "chmod": "all", "chown": "all", "chattr": "all",
-            "cp": "dest", "install": "dest", "dd": "of", "sed": "inplace", "perl": "inplace"}
+            "cp": "dest", "install": "dest", "dd": "of", "sed": "inplace", "perl": "inplace",
+            "touch": "all"}  # touch: the estate heartbeat stamp is a file whose mtime is the evidence
 # Words that run another command given as their arguments (sudo -u root rm x, xargs rm, timeout 5 rm x).
 E2_WRAPPERS = WRAPPERS | {"timeout", "xargs", "su", "doas", "ionice"}
 # Shells that run a command string after -c (bash -c, bash -lc, su -c, pwsh -Command).
@@ -759,10 +772,10 @@ def _find_wipes(seg, i):
     return deletes and not any(w in ("-name", "-iname", "-path", "-ipath", "-regex", "-iregex") for w in rest)
 
 
-def dir_wipe_target(cmd, root):
+def dir_wipe_target(cmd, root, guard=()):
     """Label of an argument of a Bash rm/rmdir/mv/shred/unlink (or an unfiltered find -delete) that
     is the project directory, one of its parents or the .claude/ directory (where the state and
-    settings live), else None."""
+    settings live) or a directory in `guard` ((absolute path, label) pairs), else None."""
     rootn, _win = _root_norm(root)
     try:
         segs = _segments(cmd)
@@ -785,17 +798,20 @@ def dir_wipe_target(cmd, root):
                 return "the .claude directory"
             if a == rootn or rootn.startswith(a.rstrip("/") + "/"):
                 return "the project directory"
+            for g, label in guard:
+                if a == g or g.startswith(a.rstrip("/") + "/"):
+                    return label
     return None
 
 
-def shell_pattern_hit(tool, cmd, globs, names, root):
+def shell_pattern_hit(tool, cmd, globs, names, root, guard=()):
     """E2 reason when one of the selected glob/brace words expands to a governance path, or (Bash)
     when rm/rmdir/mv/shred/unlink is aimed at the project directory, a parent or .claude/; else None."""
     for w in dict.fromkeys(globs):
         hit = glob_hit(w, names, root)
         if hit:
             return f"shell glob/brace pattern expands to {hit}"
-    hit = dir_wipe_target(cmd, root) if tool == "Bash" else None
+    hit = dir_wipe_target(cmd, root, guard) if tool == "Bash" else None
     return f"destructive command aimed at {hit}" if hit else None
 
 
@@ -839,7 +855,7 @@ def enforce(inp, manifest, root, ledger_path, store_source):
     if err:
         deny(ledger_path, event, "E0", f"{err}; fail-closed")
     if estate is not None:
-        if estate.exists():
+        if present(estate):
             deny(ledger_path, event, "E1",
                  f"estate kill sentinel present ({path_key(estate, root)}); all tool calls halted")
         if max_age is not None:
@@ -869,12 +885,20 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         protected.append((re.escape(a) + "$", label))
         if a.startswith(rootn + "/"):
             protected.append((re.escape(a[len(rootn) + 1:]) + "$", label))
+    guard = []  # directories the sentinel and stamp live in: rm / mv of them is denied (shell_pattern_hit)
     for p, label in ((estate, "the estate kill sentinel"), (stamp, "the estate heartbeat stamp")):
         if p is not None:
             a, rootn = _abs_norm(p, root)
             protected.append((re.escape(a) + "$", label))
             if a.startswith(rootn + "/"):
                 protected.append((re.escape(a[len(rootn) + 1:]) + "$", label))
+                d = posixpath.dirname(a)
+                if d != rootn and d != rootn + "/.claude/state" and (d, "the estate sentinel directory") not in guard:
+                    guard.append((d, "the estate sentinel directory"))
+    if stamp is not None:
+        # by name, wherever it is written from: `cd estate && touch KILL.alive`, `touch $d/KILL.alive`,
+        # `touch lnk/KILL.alive` all name the stamp, but the exact-path rule above never sees the directory.
+        protected.append((r"(?:^|[\\/])" + re.escape(stamp.name) + "$", "the estate heartbeat stamp"))
     protected += [(str(p), str(p)) for p in (enf.get("protected_paths") or [])]
     try:
         rules = [(re.compile(_lean(pat), re.IGNORECASE), label) for pat, label in protected]
@@ -901,7 +925,7 @@ def enforce(inp, manifest, root, ledger_path, store_source):
             if rx.search(target):
                 deny(ledger_path, event, "E2", f"write/touch of protected governance path matched '{label}'")
     if tool in SHELL_TOOLS:
-        reason = shell_pattern_hit(tool, shell_command(tool, ti), globs, names, root)
+        reason = shell_pattern_hit(tool, shell_command(tool, ti), globs, names, root, guard)
         if reason:
             deny(ledger_path, event, "E2", reason)
 
