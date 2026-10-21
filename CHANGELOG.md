@@ -59,7 +59,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
     - **PowerShell** `Remove-Item -Recurse -Force build` denied E3. This was the first live Windows run of all-tools gating.
     - PowerShell `Get-Date` with the kill sentinel present denied E1.
     - Four ledger records.
-  - The first suite run there failed 4 allow cases with E0 "PyYAML missing". The tests' `env -i` had removed `LOCALAPPDATA`, where the Store Python keeps per-user packages. The gate failed closed correctly; the test was wrong. The tests now keep HOME, USERPROFILE, LOCALAPPDATA, APPDATA, SYSTEMROOT, WINDIR, TEMP and TMP, and strip only PATH. The suite has not been re-run on Windows after that change.
+  - The first suite run there failed 4 allow cases with E0 "PyYAML missing". The tests' `env -i` had removed `LOCALAPPDATA`, where the Store Python keeps per-user packages. The gate failed closed correctly; the test was wrong. The tests now keep HOME, USERPROFILE, LOCALAPPDATA, APPDATA, SYSTEMROOT, WINDIR, TEMP and TMP, and strip only PATH. Re-run on the same machine from a fresh clone of main at `fe90f9b` (2026-10-21): `run_launcher.sh` 25 PASS, 0 FAIL.
 
 ---
 
