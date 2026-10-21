@@ -128,8 +128,9 @@ The plugin ships an **Enforcement Gate**: a Claude Code `PreToolUse` hook (`hook
 Gated tools (1.2+): every tool except Read, Glob, Grep, LS, NotebookRead and TodoWrite, including
 PowerShell and MCP tools. E1, E2, E4 and L apply to all of them; E3 and E5 read shell commands (Bash and
 PowerShell). PowerShell has no parser, so E5 denies any PowerShell command that names a written file,
-reads included. In 1.1 only Bash, Edit, Write, MultiEdit and NotebookEdit were gated. Requires `python3` and PyYAML on PATH;
-without PyYAML the gate fails closed. The gate loads only with the plugin install (Method A);
+reads included. In 1.1 only Bash, Edit, Write, MultiEdit and NotebookEdit were gated. Requires a POSIX `sh` (Git Bash on
+Windows) and Python 3 with PyYAML; the launcher tries `python3`, `py -3`, then `python` (1.2.4+), and when none runs the gate
+in a project with a manifest it denies with E0. Without PyYAML the gate fails closed. The gate loads only with the plugin install (Method A);
 `--bare` and `disableAllHooks` turn it off. Once a manifest exists the agent cannot edit it —
 governance changes are made by the human, outside the session.
 
