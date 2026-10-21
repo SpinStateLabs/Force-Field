@@ -19,8 +19,21 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install ajv-cli
-        run: npm install -g ajv-cli ajv-formats
+      - name: Install ajv-cli (pinned)
+        run: npm install --no-save ajv-cli@5.0.0 ajv-formats@2.1.1
+
+      - name: Validate shipped manifests against the FIELD schema
+        run: |
+          schema=plugins/field/skills/field/manifest-schema.json
+          for f in plugins/field/skills/field/templates/*.yaml plugins/field/hooks/test/field-manifest.yaml field-manifest.draft.yaml; do
+            npx ajv validate --spec=draft2020 -c ajv-formats -s "$schema" -d "$f" || exit 1
+          done
+          # Negative case: the step must be able to fail. An unknown enforcement key is invalid.
+          sed 's/^enforcement:$/enforcement:\n  not_a_field_key: true/' plugins/field/skills/field/templates/field-manifest-default.yaml > "$RUNNER_TEMP/bad.yaml"
+          grep -q '^  not_a_field_key: true$' "$RUNNER_TEMP/bad.yaml" || { echo "negative case not constructed"; exit 1; }
+          if npx ajv validate --spec=draft2020 -c ajv-formats -s "$schema" -d "$RUNNER_TEMP/bad.yaml"; then
+            echo "schema accepted an unknown enforcement key"; exit 1
+          fi
 
       - name: Validate marketplace.json structure
         run: |
