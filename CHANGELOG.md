@@ -12,9 +12,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 - FORCE v1.1 refinements based on real-world usage feedback.
 - FIELD refinements: manifest examples per pillar, reference architectures; possible reference implementation of runtime enforcement in n8n.
-- Enforcement Gate, next: policy-driven verdicts (`irreversible_action_policy` → deny / ask / allow-with-ledger), a `kill_switch.local_sentinel` alongside an estate endpoint. (The locked call counter shipped in 1.2.0.)
+- Enforcement Gate, next: a `kill_switch.local_sentinel` alongside an estate endpoint. (The locked call counter shipped in 1.2.0.)
 - Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
 - FORCE + FIELD runtime composition — automatic FORCE application inside FIELD-declared agents.
+
+---
+
+## field — 1.3.0 / marketplace — 1.5.0 — 2026-10-21
+
+### Added
+
+- **Policy-driven E3 verdicts, opt-in (ADR-0071, harness repo).** New optional key `enforcement.irreversible_actions.deny_patterns_verdict: deny | policy`, default `deny`, so every existing manifest behaves exactly as in 1.2.x. With `policy` a `deny_patterns` match follows `irreversible_action_policy`: `forbid` denies; `require_human_approval` returns `permissionDecision: "ask"` (Claude Code's permission prompt); `allow_with_ledger` allows and writes a ledger record with `rule: "E3-allowed"`. Schema revision 1.3.0, additive. The templates are unchanged (they do not set the key). The ledger records an ask as `decision: "ask"`, `rule: "E3-policy"`.
+- `hooks/test/run_e3_policy.sh` (60 checks) runs in the `gate-tests` CI job.
+
+### Safety
+
+- **`ask` never allows.** It is emitted only for a `permission_mode` of `default`, `acceptEdits`, `auto`, `dontAsk` or `bypassPermissions`; a missing or other mode is denied (E3). E1, E2, E4 and E5 are evaluated first and still deny. An invalid `deny_patterns_verdict` is E0 on any shell call; `policy` with a missing or invalid `irreversible_action_policy` is E0 on a match. If the verdict JSON cannot be written to stdout the call is denied (exit 0 with no output would be an allow).
+- Live test, Claude Code 2.1.306, Linux (2026-10-21, ADR-0071 Implementation): in `claude -p` a hook `ask` was turned into a denial and the command did not run, in every mode tried (default, acceptEdits, dontAsk, auto, bypassPermissions, and with `--allowedTools Bash`). Interactively (pty) it showed "Hook PreToolUse:Bash requires confirmation" in default, acceptEdits, auto, dontAsk and bypassPermissions, and with `--allowedTools Bash`; Yes ran the command, Esc did not.
+
+### Known limits
+
+- An `ask` approval is given by whoever holds the terminal. It does not name an approver (P-25) and the ledger cannot prove who approved; it records the ask, not the answer.
+- Verified only on Claude Code 2.1.306 on Linux through the CLI. Older versions, the IDE and desktop surfaces, and Agent SDK hosts that auto-approve a permission request were not tested.
+- Needs the field-core lockstep in field-platform (Pydantic `extra="forbid"`, three vendored schema copies) before an estate accepts a manifest carrying the key.
 
 ---
 
