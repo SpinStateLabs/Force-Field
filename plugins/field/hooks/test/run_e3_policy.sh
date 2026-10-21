@@ -9,7 +9,9 @@
 set -u
 cd "$(dirname "$0")"
 HERE="$PWD"; G="$HERE/../field-gate.py"; L="$HERE/../field-gate.sh"; V="$HERE/../verify-ledger.py"
-PY=$(command -v python3 || command -v python)
+# first interpreter that can import PyYAML (a Windows Store python3 stub exists but cannot run anything)
+PY=""; for c in python3 python; do command -v "$c" >/dev/null 2>&1 && "$c" -c 'import yaml' >/dev/null 2>&1 && { PY=$c; break; }; done
+[ -n "$PY" ] || { echo "FAIL  no Python 3 with PyYAML on this machine"; exit 1; }
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 fail=0
 expect() { if [ "$2" = "$3" ]; then echo "PASS  $1"; else echo "FAIL  $1 (expected $2, got $3)"; fail=1; fi; }
