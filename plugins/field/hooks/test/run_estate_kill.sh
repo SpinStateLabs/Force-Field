@@ -115,9 +115,17 @@ mkdir -p "$P/estate" "$P/other"; : > "$P/estate/ESTATE_KILL.alive"
 for c in 'cd estate && touch ESTATE_KILL.alive' '(cd estate && touch ESTATE_KILL.alive)' 'sh -c "cd estate; touch ESTATE_KILL.alive"' \
          'a=estate; touch $a/ESTATE_KILL.alive' 'touch $(echo estate)/ESTATE_KILL.alive' 'ln -s estate lnk; touch lnk/ESTATE_KILL.alive' \
          'cd estate && rm -f ESTATE_KILL.alive' 'cd estate && echo x > ESTATE_KILL.alive' 'cd estate; cp /dev/null ESTATE_KILL.alive' \
-         'touch estate/ESTATE_KILL.al*' 'rm estate/ESTATE_K*'; do
+         'touch estate/ESTATE_KILL.al*' 'rm estate/ESTATE_K*' 'cd estate && rm -f ESTATE_KILL' '(cd estate && rm ESTATE_KILL)' \
+         'cd estate; : > ESTATE_KILL.alive'; do
   r=$(bash_ "$P" "$c"); expect "E2 deny: $c" 2 "${r%%|*}"; has "E2 rule: $c" "$r" '[E2]'
 done
+# a sentinel that shares the default sentinel's name (KILL): protected by name too, but /field kill still works
+P=$(project e2d "HTTP POST" "http://x/kill" "estate/KILL" 30); mkdir -p "$P/estate" "$P/.claude/state"; : > "$P/estate/KILL.alive"
+for c in 'cd estate && rm -f KILL' 'cd estate; rm KILL' '(cd estate && rm KILL)'; do
+  r=$(bash_ "$P" "$c"); expect "E2 deny: $c (sentinel named KILL)" 2 "${r%%|*}"; has "E2 rule: $c" "$r" '[E2]'
+done
+r=$(bash_ "$P" "touch .claude/state/KILL"); expect "/field kill (touch .claude/state/KILL) still allowed" 0 "${r%%|*}"
+P=$(project e2c2 "HTTP POST" "http://x/kill" "estate/ESTATE_KILL" 30); mkdir -p "$P/estate" "$P/other"; : > "$P/estate/ESTATE_KILL.alive"
 for c in 'rm -r estate' 'rm -rf estate/' 'rm -r ./estate' 'mv estate estate2' 'mv ./estate/ /tmp/x' 'rmdir estate'; do
   r=$(bash_ "$P" "$c"); expect "E2 deny (sentinel directory): $c" 2 "${r%%|*}"; has "E2 rule (directory): $c" "$r" 'estate sentinel directory'
 done

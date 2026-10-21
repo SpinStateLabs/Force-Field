@@ -899,6 +899,11 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         # by name, wherever it is written from: `cd estate && touch KILL.alive`, `touch $d/KILL.alive`,
         # `touch lnk/KILL.alive` all name the stamp, but the exact-path rule above never sees the directory.
         protected.append((r"(?:^|[\\/])" + re.escape(stamp.name) + "$", "the estate heartbeat stamp"))
+    if estate is not None:
+        # likewise the sentinel: `cd estate && rm -f ESTATE_KILL`. Not as the default sentinel itself, which
+        # /field kill creates in .claude/state/.
+        protected.append((r"(?:^|[\\/])(?<!\.claude/state/)(?<!\.claude\\state\\)" + re.escape(estate.name) + "$",
+                          "the estate kill sentinel"))
     protected += [(str(p), str(p)) for p in (enf.get("protected_paths") or [])]
     try:
         rules = [(re.compile(_lean(pat), re.IGNORECASE), label) for pat, label in protected]
