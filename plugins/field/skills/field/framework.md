@@ -97,7 +97,14 @@ defer, and how much it may spend.
     including PowerShell and MCP tools (1.1 gated only Bash and the four file tools).
   - `irreversible_actions.deny_patterns[]` are Python regexes matched against Bash and PowerShell commands;
     a match is denied outright (E3) **regardless of** `irreversible_action_policy`, which
-    governs everything the patterns do not name.
+    governs everything the patterns do not name. Opt-in (field 1.3+):
+    `irreversible_actions.deny_patterns_verdict: policy` makes a match follow the policy instead:
+    `forbid` denies; `require_human_approval` hands the call to Claude Code's permission prompt
+    (`permissionDecision: ask`); `allow_with_ledger` allows it with a ledger record (rule `E3-allowed`).
+    Default `deny`. An `ask` is answered by whoever holds the terminal, not by a named approver, so it
+    does not by itself evidence named-human approval; it is denied wherever no prompt is known to reach
+    a human (`claude -p`, or a `permission_mode` the gate has not seen prompt). E1, E2, E4 and E5 still
+    win over an `ask`, and E2 and E5 stay deny-only.
   - `irreversible_actions.session_written_exec: deny` (field 1.2+) denies a Bash command that
     names a file the same session wrote with Write/Edit/MultiEdit/NotebookEdit, unless the
     command is a read-only tool such as `cat`, `ls` or `git` (E5). It closes the

@@ -35,6 +35,19 @@ jobs:
             echo "schema accepted an unknown enforcement key"; exit 1
           fi
 
+      - name: Validate the deny_patterns_verdict key (positive and negative)
+        run: |
+          schema=plugins/field/skills/field/manifest-schema.json
+          fixture=plugins/field/hooks/test/field-manifest.yaml
+          sed 's/^  irreversible_actions:\(.*\)$/  irreversible_actions:\1\n    deny_patterns_verdict: policy/' "$fixture" > "$RUNNER_TEMP/verdict-ok.yaml"
+          grep -q '^    deny_patterns_verdict: policy$' "$RUNNER_TEMP/verdict-ok.yaml" || { echo "positive case not constructed"; exit 1; }
+          npx ajv validate --spec=draft2020 -c ajv-formats -s "$schema" -d "$RUNNER_TEMP/verdict-ok.yaml" || exit 1
+          sed 's/deny_patterns_verdict: policy/deny_patterns_verdict: maybe/' "$RUNNER_TEMP/verdict-ok.yaml" > "$RUNNER_TEMP/verdict-bad.yaml"
+          grep -q 'deny_patterns_verdict: maybe' "$RUNNER_TEMP/verdict-bad.yaml" || { echo "negative case not constructed"; exit 1; }
+          if npx ajv validate --spec=draft2020 -c ajv-formats -s "$schema" -d "$RUNNER_TEMP/verdict-bad.yaml"; then
+            echo "schema accepted an invalid deny_patterns_verdict"; exit 1
+          fi
+
       - name: Validate marketplace.json structure
         run: |
           echo "Checking .claude-plugin/marketplace.json exists..."
@@ -124,3 +137,5 @@ jobs:
         run: bash plugins/field/hooks/test/run_e5.sh
       - name: Launcher tests (no Python, stub Python, fallbacks)
         run: bash plugins/field/hooks/test/run_launcher.sh
+      - name: E3 policy-verdict tests (ADR-0071)
+        run: bash plugins/field/hooks/test/run_e3_policy.sh

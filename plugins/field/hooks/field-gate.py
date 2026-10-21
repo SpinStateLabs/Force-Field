@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FIELD Enforcement Gate — Claude Code PreToolUse hook (field plugin v1.2).
+FIELD Enforcement Gate — Claude Code PreToolUse hook (field plugin v1.3).
 
 Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project directory
 ($CLAUDE_PROJECT_DIR, else the hook input's cwd, else the process cwd) and enforces:
@@ -25,7 +25,12 @@ Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project di
                           governance paths; ls *, cat *.md and grep "x" are not. A Bash rm/rmdir/mv/
                           shred/unlink aimed at the project directory, a parent or .claude/ is denied.
   E3  irreversible ops -> deny shell commands matching enforcement.irreversible_actions.deny_patterns
-                          (Python re.search), independent of irreversible_action_policy.
+                          (Python re.search), independent of irreversible_action_policy, unless the
+                          manifest opts in with irreversible_actions.deny_patterns_verdict: policy
+                          (field 1.3+): then the match follows irreversible_action_policy -- forbid ->
+                          deny; require_human_approval -> permissionDecision "ask" (exit 0), only in a
+                          permission_mode live-tested to show a prompt, else deny; allow_with_ledger ->
+                          allow plus a ledger record with rule E3-allowed. E1, E2, E4 and E5 still win.
   E4  call budget      -> deny once the session's gated-call count exceeds `max` of the
                           enforcement.rate_limits entry {action: tool_call, period: session}.
   E5  session-written  -> opt-in (enforcement.irreversible_actions.session_written_exec: deny).
@@ -37,7 +42,9 @@ Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project di
                           File-tool records carry `path`: root-relative inside the project,
                           sha256:<hex> outside it (no plaintext absolute paths).
 
-Exit 0 = allow. Exit 2 = deny (stderr line + JSON permissionDecision surfaced to the model). No other exit
+Exit 0 = allow, or ask (JSON permissionDecision "ask" on stdout: Claude Code shows its permission prompt
+and, with no human to answer, as in `claude -p`, treats the call as denied). Exit 2 = deny (stderr line + JSON
+permissionDecision surfaced to the model). No other exit
 once this file runs, short of the process being killed: field-gate.sh retries another interpreter only on
 an exit of 1-127 other than 2, which means this file never ran.
 Fail-closed: with a manifest present, an unreadable manifest, missing PyYAML, a misconfigured
@@ -86,6 +93,14 @@ TIME_BUDGET_S = 5.0                # enforce() wall clock; hooks.json gives the 
 BUDGET_ACTIONS = {"tool_call"}
 BUDGET_PERIODS = {"session", "per-session", "per_session"}
 SWE_MODES = {"allow", "deny"}
+# E3 deny_patterns_verdict (field 1.3+). `deny` (default) = a match is always denied; `policy` = follow
+# irreversible_action_policy. POLICY_VERDICT maps the policy to the gate's verdict.
+VERDICT_MODES = {"deny", "policy"}
+POLICY_VERDICT = {"forbid": "deny", "require_human_approval": "ask", "allow_with_ledger": "allow"}
+# permission_mode values for which a PreToolUse "ask" was seen to show a prompt to a human (Claude Code
+# 2.1.306, interactive; ADR-0071 Implementation). Under `claude -p` Claude Code itself turns "ask" into a deny.
+# Any other or missing value: the gate cannot tell a prompt will reach anyone, so it denies instead.
+ASK_MODES = {"default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"}
 # Interpreters whose first non-flag argument is a script path (E5).
 INTERPRETER_RE = re.compile(
     r"^(?:(?:ba|z|da|k)?sh|source|\.|python(?:\d+(?:\.\d+)?)?|node|deno|bun|ruby|perl|php|"
@@ -443,6 +458,20 @@ def emit_deny(rule, reason):
         except OSError:
             pass
     sys.exit(2)
+
+
+def emit_ask(ledger_path, event, rule, reason):
+    """Record the verdict, then hand the call to the user's permission prompt (exit 0 + JSON on stdout).
+    Exit 0 with nothing on stdout is an ALLOW, so if the JSON cannot be written the call is denied instead."""
+    ledger_append(ledger_path, {**event, "decision": "ask", "rule": rule, "reason": reason})
+    try:
+        if sys.stdout is None:
+            raise OSError("no stdout")
+        print(json.dumps({"hookSpecificOutput": {"hookEventName": "PreToolUse",
+              "permissionDecision": "ask", "permissionDecisionReason": f"[E3] {reason}"}}), flush=True)
+    except Exception:
+        deny(ledger_path, event, "E0", "could not deliver the ask verdict (stdout unusable); denied, fail-closed")
+    sys.exit(0)
 
 
 def deny(ledger_path, event, rule, reason):
@@ -823,15 +852,46 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         if reason:
             deny(ledger_path, event, "E2", reason)
 
-    # E3 irreversible action patterns (shell command text).
+    # E3 irreversible action patterns (shell command text). Default: a match is denied. With
+    # irreversible_actions.deny_patterns_verdict: policy the match follows irreversible_action_policy.
+    e3_pending = None  # ("ask" | "allow", reason): a non-deny E3 verdict, applied after E5 and E4 have passed
     if tool in SHELL_TOOLS:
         cmd = shell_command(tool, ti)
-        pats = (enf.get("irreversible_actions") or {}).get("deny_patterns") or []
+        ia3 = enf.get("irreversible_actions") or {}
+        if not isinstance(ia3, dict):
+            deny(ledger_path, event, "E0", "irreversible_actions is not a mapping; fail-closed")
+        vmode = str(ia3.get("deny_patterns_verdict") or "deny").strip().casefold()
+        if vmode not in VERDICT_MODES:
+            deny(ledger_path, event, "E0", "deny_patterns_verdict must be deny or policy; fail-closed")
+        pats = ia3.get("deny_patterns") or []
         for pat in pats:
             if _overdue():
                 deny(ledger_path, event, "E0", f"E3 check exceeded {TIME_BUDGET_S:g} s; fail-closed")
             if re.search(str(pat), cmd, re.IGNORECASE if tool == "PowerShell" else 0):
-                deny(ledger_path, event, "E3", f"command matched irreversible-action pattern '{pat}'")
+                if vmode == "deny":
+                    deny(ledger_path, event, "E3", f"command matched irreversible-action pattern '{pat}'")
+                policy = str(enf.get("irreversible_action_policy") or "").strip().casefold()
+                verdict = POLICY_VERDICT.get(policy)
+                if verdict is None:
+                    deny(ledger_path, event, "E0",
+                         "deny_patterns_verdict is policy but irreversible_action_policy is missing or not one of "
+                         "forbid, require_human_approval, allow_with_ledger; fail-closed")
+                if verdict == "deny":
+                    deny(ledger_path, event, "E3",
+                         f"command matched irreversible-action pattern '{pat}' (irreversible_action_policy: forbid)")
+                if verdict == "ask":
+                    mode = inp.get("permission_mode")
+                    if mode not in ASK_MODES:
+                        deny(ledger_path, event, "E3",
+                             f"command matched irreversible-action pattern '{pat}'; policy is "
+                             "require_human_approval but permission_mode "
+                             f"{mode!r} is not one where a prompt is known to reach a human; denied")
+                    e3_pending = ("ask", f"command matched irreversible-action pattern '{pat}'; "
+                                         "irreversible_action_policy is require_human_approval")
+                else:
+                    e3_pending = ("allow", f"command matched irreversible-action pattern '{pat}'; "
+                                           "irreversible_action_policy is allow_with_ledger")
+                break
 
     # E5 session-written execution (opt-in): deny running a file this session wrote via a file tool.
     if tool in SHELL_TOOLS:
@@ -887,6 +947,11 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         if n > budget:
             deny(ledger_path, event, "E4", f"session tool-call budget {budget} exceeded (call #{n})")
 
+    if e3_pending and e3_pending[0] == "ask":
+        emit_ask(ledger_path, event, "E3-policy", e3_pending[1])
+    if e3_pending:  # allow_with_ledger
+        ledger_append(ledger_path, {**event, "decision": "allow", "rule": "E3-allowed", "reason": e3_pending[1]})
+        sys.exit(0)
     ledger_append(ledger_path, {**event, "decision": "allow"})
     sys.exit(0)
 
