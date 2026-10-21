@@ -29,6 +29,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 - Without the watcher running the key does nothing; without `sentinel_max_age_s` a watcher that is down silently drops a kill (fail-open). The stamp only proves the watcher polled recently, not that the estate was reachable for the whole window.
 - Kill latency is bounded by the watcher's poll interval.
+- The sentinel and the stamp are protected by E2, so they share E2's limits: regex matching of command text is a tripwire, not a sandbox. A program the agent runs that sets the stamp's mtime without naming the file is not caught.
 - Needs the field-core lockstep in field-platform (`KillSwitch` is `extra="forbid"`) before an estate accepts a manifest carrying the keys.
 - Not run on Windows: the watcher is a Python tool meant for a scheduled task on the host.
 
