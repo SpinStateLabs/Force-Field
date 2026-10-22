@@ -113,6 +113,15 @@ defer, and how much it may spend.
     does not by itself evidence named-human approval; it is denied wherever no prompt is known to reach
     a human (`claude -p`, or a `permission_mode` the gate has not seen prompt). E1, E2, E4 and E5 still
     win over an `ask`, and E2 and E5 stay deny-only.
+  - `require_human_approval` under `deny_patterns_verdict: policy` is **not** P-25 named-approver
+    approval: "ask" is a prompt to whoever holds the terminal. The ledger records only that the call ran
+    (`E3-policy-executed`, `human_approval: "not_evidenced"`, `approver: null`, field 1.5+). No estate
+    may cite it as P-25 or named-approver evidence. Host rule (ADR-0075): "ask" is verified only on
+    Linux CLI 2.1.306 and Windows CLI 2.1.307 in `default` mode (MEDIUM: inferred from logs). Under a
+    `permission_mode` other than `default` an ask can run without a person (Windows 2.1.307 `auto`:
+    the ask did not hold the command, MEDIUM). IDE, desktop and Agent SDK hosts are UNVERIFIED.
+    Estates on any other host, or any session that may run in `auto` mode, set
+    `deny_patterns_verdict: deny`.
   - `irreversible_actions.session_written_exec: deny` (field 1.2+) denies a Bash command that
     names a file the same session wrote with Write/Edit/MultiEdit/NotebookEdit, unless the
     command is a read-only tool such as `cat`, `ls` or `git` (E5). It closes the

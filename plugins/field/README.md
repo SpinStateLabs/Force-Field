@@ -130,6 +130,16 @@ Post-call evidence (1.5+): a `PostToolUse` hook (`hooks/field-post.py`) appends 
 when a call the gate answered with an ask (`E3-policy`) ran. It is evidence only (always exit 0, no verdict) and it records that the
 call ran, with `human_approval: "not_evidenced"` and `approver: null`; it does not say who approved. See the CHANGELOG, field 1.5.0.
 
+`require_human_approval` under `deny_patterns_verdict: policy` is **not** P-25 named-approver approval. The gate answers "ask", which is a
+prompt to whoever holds the terminal. The ledger records only that the call ran (`E3-policy-executed`, `human_approval: "not_evidenced"`,
+`approver: null`). No estate may cite it as P-25 or named-approver evidence.
+
+Where "ask" is verified (ADR-0071 Implementation, ADR-0075): Linux CLI 2.1.306 (the prompt held the call in every `permission_mode` tried, HIGH)
+and Windows CLI 2.1.307 in `default` mode (PASS-ask, MEDIUM: inferred from logs, prompt text not captured). Under a `permission_mode` other than
+`default` an ask can run without a person: on Windows 2.1.307, in every logged `auto` run the ask did not hold the command (MEDIUM). IDE,
+desktop and Agent SDK hosts were not run (UNVERIFIED; an SDK host that auto-approves a permission request would turn an ask into an allow, which the
+gate cannot see). Estates on any other host, or with any session that may run in `auto` mode, set `deny_patterns_verdict: deny`.
+
 Gated tools (1.2+): every tool except Read, Glob, Grep, LS, NotebookRead and TodoWrite, including
 PowerShell and MCP tools. E1, E2, E4 and L apply to all of them; E3 and E5 read shell commands (Bash and
 PowerShell). PowerShell has no parser, so E5 denies any PowerShell command that names a written file,

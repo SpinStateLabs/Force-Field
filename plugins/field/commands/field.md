@@ -171,7 +171,8 @@ manifest exists in the project directory. Conventions (full detail in `skills/fi
 - Budget: the `enforcement.rate_limits` entry `{action: tool_call, period: session}`.
 - E3: matches are denied; with `irreversible_actions.deny_patterns_verdict: policy` (1.3+) a match follows
   `irreversible_action_policy` (forbid: deny; require_human_approval: ask via the permission prompt, denied when
-  headless; allow_with_ledger: allow + ledger record).
+  headless; allow_with_ledger: allow + ledger record). An ask is a prompt to whoever holds the terminal, NOT P-25
+  named-approver approval; it is verified only on the hosts in the plugin README (otherwise set `deny_patterns_verdict: deny`).
 - E5: `enforcement.irreversible_actions.session_written_exec: deny` denies Bash commands that name a
   file the same session wrote (read-only tools excepted); `session_written_exec_allow` regexes exempt root-relative paths.
 - Gated tools (1.2+): every tool except Read, Glob, Grep, LS, NotebookRead and TodoWrite, including
