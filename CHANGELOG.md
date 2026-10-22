@@ -17,6 +17,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
+## field — 1.5.0 / marketplace — 1.7.0 — 2026-10-22
+
+### Added
+
+- **PostToolUse evidence hook (ADR-0075 part (a), harness repo).** `hooks.json` registers a second hook, `PostToolUse` with matcher `*`, which runs `hooks/field-post.sh` (launcher) and `hooks/field-post.py`. For a `tool_use_id` the gate recorded as an ask (`decision: "ask"`, `rule: "E3-policy"`) in the same session, it appends ONE ledger record, `rule: "E3-policy-executed"`, `decision: "executed"`, `ran: true`: the call ran. The record carries `session`, `tool`, `tool_use_id`, `permission_mode` (from the PostToolUse input), `ask_hash` (the ask's `hash`, linking the two), `human_approval: "not_evidenced"`, `approver: null` and `mode_is_default`. A call that ran under any `permission_mode` other than `default` (`auto`, `acceptEdits`, `dontAsk`, `bypassPermissions`, an unknown, missing or non-string mode) has `mode_is_default: false` and a `reason` beginning "NOT a human approval". A declined or blocked call produces no PostToolUse, so a logged ask with no `E3-policy-executed` record did not run. `verify-ledger.py` is unchanged: it checks the chain, not rule names.
+- `hooks/test/run_post_hook.sh` (103 checks) runs in the `gate-tests` CI job. Each pin was run once against a mutant that removes it (see the PR).
+
+### Design
+
+- **Evidence only.** `field-post.sh` and `field-post.py` always exit 0, write nothing to stdout (the launcher also drops the interpreter's stdout), and swallow any internal error (one stderr line). A project with no manifest, an unparsable manifest, no ledger, an ask that is not in this session, or an id already recorded is a no-op. The hook reads `hook_event_name`, `session_id`, `tool_use_id`, `permission_mode` and `cwd` only; `tool_input` and `tool_response` are never read, so no tool output reaches the ledger.
+- **Ledger scan, not a side file.** The hook finds the ask by scanning the ledger newest-first for the id. Tradeoff: one read of the ledger per PostToolUse (the gate's own append already reads the whole file, so the order of cost is the same; the scan skips lines that do not contain the id), against a pending-ask side file, which would be a second store to keep in step, would need a change to the gate's PreToolUse path, and could drift from the ledger. A call that was not an ask is found absent without taking the lock. For an ask, the scan is repeated under the gate's lock (`gate_lock`) and the record is written with the gate's `ledger_append`, so the chain stays valid and parallel PostToolUse for one id append once.
+- **Separate from the gate's retry path.** `field-gate.sh` is unchanged and so is `field-gate.py`: PreToolUse behaviour and its exit-code contract are untouched. `field-post.sh` has its own interpreter loop (python3, `py -3`, python) that stops at the first exit 0 and then exits 0 whatever happened; a repeat is harmless because the record is written once per id.
+- **No manifest key, no schema change.** The hook needs nothing in `field-manifest.yaml`, so there is no field-core or vendored-schema lockstep in field-platform (its `sealed-ledger` service is a different ledger and does not read this one). Nothing in field-platform was edited.
+
+### Known limits
+
+- The ledger shows that a call RAN after an ask, not who approved it. The PostToolUse input names no approver (ADR-0071 Implementation, Windows CLI 2.1.307), so P-25 (a named human) stays unmet. Do not cite `E3-policy-executed` as named-approver evidence.
+- Under `permission_mode` other than `default` the record is not a human approval: in logged Windows runs under `auto`, the hook's ask did not hold a command (ADR-0071 Implementation, MEDIUM). Even under `default` the record does not prove a person pressed Yes; the interactive-prompt evidence for `default` is MEDIUM.
+- Tested only where ADR-0071 recorded the payload: Windows CLI 2.1.307 (payload keys, `tool_use_id` equal on Pre and Post) and, for the suites here, Linux. IDE, desktop and Agent SDK hosts, and other Claude Code versions, are not tested; a host that sends no PostToolUse, or a different `tool_use_id`, leaves the ask without an executed record, which reads as "did not run".
+- The project root is found as the gate finds it (`CLAUDE_PROJECT_DIR`, else the input's `cwd`). PostToolUse input over 8 MiB (it carries `tool_response`) is skipped and records nothing.
+- Needs Python 3 and PyYAML as the gate does; without them nothing is recorded (fail-open, unlike the gate).
+
+---
+
 ## field — 1.4.0 / marketplace — 1.6.0 — 2026-10-21
 
 ### Added

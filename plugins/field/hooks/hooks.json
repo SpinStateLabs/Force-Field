@@ -7,6 +7,14 @@
           { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/field-gate.sh\"", "timeout": 10 }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/field-post.sh\"", "timeout": 10 }
+        ]
+      }
     ]
   }
 }

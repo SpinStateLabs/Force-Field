@@ -86,8 +86,9 @@ field/
 ├── commands/
 │   └── field.md                        # /field slash command logic
 ├── hooks/
-│   ├── hooks.json                      # PreToolUse registration (auto-loaded by Claude Code)
+│   ├── hooks.json                      # PreToolUse + PostToolUse registration (auto-loaded by Claude Code)
 │   ├── field-gate.py                   # the Enforcement Gate (E1–E5, L)
+│   ├── field-post.py / field-post.sh   # PostToolUse evidence hook: records that an asked call ran (1.5+)
 │   ├── verify-ledger.py                # hash-chain verifier (/field verify)
 │   └── test/                           # fixture + smoke test: bash hooks/test/run.sh
 ├── install.ps1 / install.sh            # manual installers
@@ -124,6 +125,10 @@ The plugin ships an **Enforcement Gate**: a Claude Code `PreToolUse` hook (`hook
 | E4 call budget | `enforcement.rate_limits` entry `{action: tool_call, period: session}` | per-session tool-call ceiling (a proxy, not a dollar spend cap) |
 | E5 session-written execution (opt-in, 1.2+) | `enforcement.irreversible_actions.session_written_exec: deny` (+ `session_written_exec_allow` regexes) | a Bash command that names a file this session wrote with a file tool is denied, unless it is a read-only tool (`cat`, `ls`, `git`, ...); covers `bash x.sh`, `./x.sh`, `python3 x.py`, `cat x.sh \| bash`, `-c` strings, wrappers like `sudo` |
 | L ledger | `ledger.store` when path-like, else `.claude/state/field-ledger.jsonl` | every decision appended, sha-256 hash-chained; `/field verify` checks it. File-tool records carry `path`: root-relative inside the project, `sha256:<hex>` outside it |
+
+Post-call evidence (1.5+): a `PostToolUse` hook (`hooks/field-post.py`) appends one ledger record, `rule: "E3-policy-executed"`,
+when a call the gate answered with an ask (`E3-policy`) ran. It is evidence only (always exit 0, no verdict) and it records that the
+call ran, with `human_approval: "not_evidenced"` and `approver: null`; it does not say who approved. See the CHANGELOG, field 1.5.0.
 
 Gated tools (1.2+): every tool except Read, Glob, Grep, LS, NotebookRead and TodoWrite, including
 PowerShell and MCP tools. E1, E2, E4 and L apply to all of them; E3 and E5 read shell commands (Bash and
