@@ -154,3 +154,5 @@ jobs:
         run: bash plugins/field/hooks/test/run_e3_policy.sh
       - name: Estate kill sentinel tests (ADR-0072)
         run: bash plugins/field/hooks/test/run_estate_kill.sh
+      - name: PostToolUse evidence-hook tests (ADR-0075 part (a))
+        run: bash plugins/field/hooks/test/run_post_hook.sh
