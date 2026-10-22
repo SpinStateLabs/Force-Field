@@ -17,6 +17,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
+## field — 1.5.1 / marketplace — 1.7.1 — 2026-10-22
+
+### Changed
+
+- **Wording only (ADR-0075 part (b), harness repo); no behaviour, hook, key or schema change.** `plugins/field/README.md`, `skills/field/framework.md` and `commands/field.md` now state that `require_human_approval` under `deny_patterns_verdict: policy` makes the gate answer "ask", a prompt to whoever holds the terminal; it is NOT P-25 named-approver approval; the ledger records only that the call ran (`E3-policy-executed`, `human_approval: "not_evidenced"`, `approver: null`); no estate may cite it as P-25 or named-approver evidence. Host rule (ADR-0075 (c)): "ask" is verified only on the hosts ADR-0071 lists (Linux CLI 2.1.306; Windows CLI 2.1.307 in `default` mode, MEDIUM); under a `permission_mode` other than `default` (`auto` etc.) an ask can run without a person; estates on any other host, or any session that may run in `auto` mode, set `deny_patterns_verdict: deny`.
+- `manifest-schema.json` is deliberately NOT edited: field-platform keeps two byte-identical vendored copies (SOURCES.md stamp, `verify_sync.sh`), so a description edit needs a lockstep re-vendor there. Its `deny_patterns_verdict` description already says an ask "is given by whoever holds the terminal, not by a named approver".
+
+### Known limits
+
+- Unchanged from 1.5.0.
+
+---
+
 ## field — 1.5.0 / marketplace — 1.7.0 — 2026-10-22
 
 ### Added
