@@ -48,6 +48,10 @@ CLEAN = [
     ("C:/p/./x/../y", "C:/p/./x/../y"),
     ("http://host:80/a", "http://host:80/a"), ("PATH=/a:/b", "PATH=/a:/b"), ("C:/p/key:val/x", "C:/p/key:val/x"),
     ("C:foo", "C:foo"),
+    ("C:/p/state:$I30/new", "C:/p/state/new"), ("C:/p/state:$I30:$INDEX_ALLOCATION/new", "C:/p/state/new"),
+    ("secrets:$I30/new", "secrets/new"), ("a:b/c", "a:b/c"),
+    ("/??/C:/p/x", "C:/p/x"), ("/??/UNC/host/share/x", "//host/share/x"), ("/??/Volume{1}/x", "/??/Volume{1}/x"),
+    ("//localhost//C$/p", "//localhost/C$/p"), ("/??/UNC/localhost/C$/p", "//localhost/C$/p"),
 ]
 for raw, want in CLEAN:
     check("_win_clean(%r)" % raw, want, g._win_clean(raw))
@@ -59,6 +63,8 @@ REFUSED = [
     "//localhost/C$/proj/.claude/state/x", "//127.0.0.1/C$/proj/x", "//?/UNC/localhost/C$/proj/x",
     BS * 2 + "localhost" + BS + "C$" + BS + "proj" + BS + "x", BS * 2 + "?" + BS + "UNC" + BS + "localhost" + BS + "C$" + BS + "x",
     "//./pipe/x", "//?/Device/HarddiskVolume3/x",
+    "/??/Volume{1234}/proj/x", "/??/GLOBALROOT/Device/HarddiskVolume3/proj/x", "/??/UNC/localhost/C$/proj/x",
+    "//localhost//C$/proj/x", BS * 2 + "localhost" + BS * 2 + "C$" + BS + "proj", "//localhost///C$/proj/x",
     "C:.claude/state/x", "C:x", "c:.claude" + BS + "state" + BS + "x",
 ]
 real_name = os.name
@@ -141,5 +147,85 @@ finally:
     os.name = real_name
     g._ROOT_CACHE.clear()
 check("POSIX branch identical to the pre-ADR-0080 code (%d comparisons)" % n, [], bad[:5])
+
+# ---- 4. the resolution cache and listing (platform independent parts) ----
+import tempfile
+
+d = tempfile.mkdtemp(prefix="canon_")
+for n in ("File.TXT", "x~1"):
+    open(os.path.join(d, n), "w").close()
+g._LIST_CACHE.clear()
+check("_absent: an entry in a different case is present", False, g._absent(d, "file.txt"))
+check("_absent: a missing name is absent", True, g._absent(d, "nope"))
+check("_absent: a name with ~ (8.3 alias) is never absent", False, g._absent(d, "NOPE~1"))
+check("_absent: a non-ASCII name is never absent", False, g._absent(d, "n\u00f6pe"))
+d2 = tempfile.mkdtemp(prefix="canon_big_")
+for i in range(5):
+    open(os.path.join(d2, "f%d" % i), "w").close()
+old_max = g._LIST_MAX
+g._LIST_MAX = 3
+g._LIST_CACHE.clear()
+check("_absent: a directory over _LIST_MAX entries is not listed (never absent)", False, g._absent(d2, "nope"))
+g._LIST_MAX = 100
+g._LIST_CACHE.clear()
+check("_absent: under the cap the listing decides", True, g._absent(d2, "nope"))
+g._LIST_MAX = old_max
+g._LIST_CACHE.clear()
+
+# Win32 error classes in _win_real: opaque (5, 1920) keep the path, a loop (1921) and anything else raises
+real_rp = os.path.realpath
+
+
+def make_rp(code):
+    def fake(path, strict=False):
+        if strict:
+            e = OSError(code, "x")
+            e.winerror = code
+            raise e
+        return path
+    return fake
+
+
+for code, want in ((5, "kept"), (1920, "kept"), (1921, "raises"), (32, "raises")):
+    g._REAL_CACHE.clear()
+    g._LIST_CACHE.clear()
+    os.path.realpath = make_rp(code)
+    try:
+        g._win_real("C:" + BS + "no" + BS + "such" + BS + "x")
+        got = "kept"
+    except OSError:
+        got = "raises"
+    finally:
+        os.path.realpath = real_rp
+    check("_win_real: Win32 error %d -> %s" % (code, want), want, got)
+
+if os.name == "nt":
+    # with the listing, N absent names under one directory cost a handful of opens, not N: red if _absent is disabled
+    calls = [0]
+
+    def counting(path, strict=False):
+        calls[0] += 1
+        return real_rp(path, strict=strict)
+    g._REAL_CACHE.clear()
+    g._LIST_CACHE.clear()
+    os.path.realpath = counting
+    try:
+        for i in range(200):
+            g._win_real(os.path.join(d, "absent%d" % i))
+    finally:
+        os.path.realpath = real_rp
+    check("_win_real: 200 absent names under one directory use few opens (%d)" % calls[0], True, calls[0] < 10)
+    # a differently cased name of an existing entry must reach the OS (a case-sensitive listing would skip it)
+    g._REAL_CACHE.clear()
+    g._LIST_CACHE.clear()
+    check("_win_real: FILE.txt resolves to the real case of File.TXT", "File.TXT",
+          os.path.basename(g._win_real(os.path.join(d, "FILE.txt"))))
+else:
+    print("N/A  _win_real open-count and case tests: Windows only")
+g._REAL_CACHE.clear()
+g._LIST_CACHE.clear()
+import shutil
+shutil.rmtree(d, ignore_errors=True)
+shutil.rmtree(d2, ignore_errors=True)
 
 sys.exit(1 if fail else 0)

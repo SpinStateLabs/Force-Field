@@ -39,13 +39,21 @@ T=$(mktemp -d); ERRF="$T/gate.err"
 LINKS=()
 LINK_ERR=""
 rmlink() { # never rm -rf a junction: Git Bash can follow it into the target
-  if is_windows; then cmd /c "rmdir $(cygpath -w "$1")" >/dev/null 2>&1; else rm -f "$1"; fi
+  if is_windows; then cmd /c "rmdir $(cygpath -w "$1")" >/dev/null 2>&1 || cmd /c "del $(cygpath -w "$1")" >/dev/null 2>&1; else rm -f "$1"; fi
 }
 cleanup() {
   for l in "${LINKS[@]+"${LINKS[@]}"}"; do rmlink "$l"; done
   [ -n "$T" ] && rm -rf "$T"
 }
 trap cleanup EXIT
+mklinkf() { # link target: a FILE symlink, target may not exist (dangling). 0 made, 1 refused
+  if is_windows; then
+    LINK_ERR=$(cmd /c "mklink $(cygpath -w "$1") $(cygpath -w "$2")" 2>&1) || return 1
+  else
+    LINK_ERR=$(ln -s "$2" "$1" 2>&1) || return 1
+  fi
+  LINKS+=("$1")
+}
 mklink() { # kind(junction|symlink) link target -> 0 made, 1 refused (reason in LINK_ERR)
   if is_windows; then
     local sw="/D"; [ "$1" = junction ] && sw="/J"
@@ -114,6 +122,29 @@ for K in $KINDS; do
   expect "E2 deny ($K): custom protected path ^secrets/ via <real root>/secrets/x, root given as a link" 2 "$(CLAUDE_PROJECT_DIR=$TA/rp_$K wr h1 "$P2A/secrets/x")"
   expect "E2 deny ($K): custom protected path ^secrets/ via <link>/secrets/x"            2 "$(CLAUDE_PROJECT_DIR=$TA/rp_$K wr h1 "$TA/rp_$K/secrets/x")"
   expect "E2 allow ($K): control, <real root>/other/x with the same root link"          0 "$(CLAUDE_PROJECT_DIR=$TA/rp_$K wr h1 "$P2A/other/x")"
+  # N1. dangling links to a protected place that does not exist yet (the strict open fails with "not found" on them)
+  if [ "$K" = junction ]; then
+    mkdir -p "$HERE/.claude/state/newd"
+    mklink junction "$HERE/dj" "$HERE/.claude/state/newd"; rmdir "$HERE/.claude/state/newd"
+    expect "E2 deny (dangling junction): Write dj/x, target .claude/state/newd was removed"   2 "$(wr n1 "dj/x")"
+    expect "E2 deny (dangling junction): Bash echo x > dj/x"                                  2 "$(call n1 Bash "$(bj "echo x > dj/x")")"
+    mkdir -p "$P2/secrets/newd"; mklink junction "$P2/dd" "$P2/secrets/newd"; rmdir "$P2/secrets/newd"
+    expect "E2 deny (dangling junction): manifest rule ^secrets/ via dd/x"                    2 "$(CLAUDE_PROJECT_DIR=$P2A wr n2 "dd/x")"
+  else
+    if mklinkf "$HERE/dl_state" "$HERE/.claude/state/newf" && mklinkf "$HERE/dl_set" "$HERE/.claude/settings.json"; then
+      expect "E2 deny (dangling symlink): Write dl_state, target .claude/state/newf does not exist" 2 "$(wr n1 "dl_state")"
+      expect "E2 deny (dangling symlink): Write <abs>/dl_state"                                2 "$(wr n1 "$H/dl_state")"
+      expect "E2 deny (dangling symlink): Bash echo x >> dl_state (bare name)"                 2 "$(call n1 Bash "$(bj "echo x >> dl_state")")"
+      expect "E2 deny (dangling symlink): Bash tee -a dl_state (bare name)"                    2 "$(call n1 Bash "$(bj "echo x | tee -a dl_state")")"
+      expect "E2 deny (dangling symlink): PowerShell Set-Content -Path dl_state"               2 "$(call n1 PowerShell "$(bj "Set-Content -Path dl_state -Value x")")"
+      expect "E2 deny (dangling symlink): Write dl_set -> .claude/settings.json"               2 "$(wr n1 "dl_set")"
+      expect "E2 deny (dangling symlink): Edit dl_set"                                         2 "$(call n1 Edit "$(jt file_path dl_set | sed 's/}$/,"old_string":"a","new_string":"b"}/')")"
+    else
+      echo "FAIL  dangling file symlinks cannot be made: $(echo "$LINK_ERR" | head -n 1)"; fail=1
+    fi
+    mklink symlink "$P2/lnk_dd" "$P2/secrets/newd" >/dev/null 2>&1
+    expect "E2 deny (dangling dir symlink): manifest rule ^secrets/ via lnk_dd/x"             2 "$(CLAUDE_PROJECT_DIR=$P2A wr n2 "lnk_dd/x")"
+  fi
 done
 
 # F. Windows spellings of one file (ADR-0080 / proposal 02 item M1). Not reachable on POSIX, where they are different names.
@@ -219,6 +250,30 @@ PYEOF
   expect "E0 deny (drive-relative): Write C:.claude\\state\\x"           2 "$(wr l1 "$DRV:.claude\\state\\x")"
   expect "E0 deny (drive-relative): Write C:.claude/state/x"             2 "$(wr l1 "$DRV:.claude/state/x")"
   expect "E0 deny (drive-relative, PowerShell): Set-Content C:.claude\\state\\x" 2 "$(call l1 PowerShell "$(bj "Set-Content -Path $DRV:.claude\\state\\x -Value x")")"
+
+  # K. directory attribute names, the NT prefix, doubled UNC separators, a link spelled in another case, a bare-drive root
+  expect "E2 deny (:\$I30): Write .claude/state:\$I30/newfile"                         2 "$(wr o1 "$H/.claude/state:\$I30/newfile")"
+  expect "E2 deny (:\$I30): Write relative .claude/state:\$I30/newfile"                2 "$(wr o1 ".claude/state:\$I30/newfile")"
+  expect "E2 deny (:\$I30:\$INDEX_ALLOCATION): Write .claude/state:\$I30:\$INDEX_ALLOCATION/newfile" 2 "$(wr o1 "$H/.claude/state:\$I30:\$INDEX_ALLOCATION/newfile")"
+  expect "E2 deny (:\$I30, Bash): echo x > .claude/state:\$I30/newfile"                 2 "$(call o1 Bash "$(bj "echo x > .claude/state:\$I30/newfile")")"
+  expect "E2 deny (:\$I30, PowerShell): Set-Content .claude\\state:\$I30\\newfile"       2 "$(call o1 PowerShell "$(bj "Set-Content -Path .claude\\state:\$I30\\newfile -Value x")")"
+  expect "E2 deny (:\$I30): manifest rule ^secrets/ via secrets:\$I30/newfile"           2 "$(CLAUDE_PROJECT_DIR=$P2A wr o2 "secrets:\$I30/newfile")"
+  expect "E2 deny (:\$I30): manifest rule ^secrets/ via <abs>/secrets:\$I30:\$INDEX_ALLOCATION/newfile" 2 "$(CLAUDE_PROJECT_DIR=$P2A wr o2 "$P2A/secrets:\$I30:\$INDEX_ALLOCATION/newfile")"
+  expect "E2 allow: control, manifest rule ^secrets/ does not cover other/x:\$I30"      0 "$(CLAUDE_PROJECT_DIR=$P2A wr o2 "other:\$I30/x")"
+  expect "E2 deny (NT prefix): Write \\??\\$W0\\.claude\\state\\x"                      2 "$(wr p1 "\\??\\$W0\\.claude\\state\\x")"
+  expect "E2 deny (NT prefix, Bash): echo x > /??/$H/.claude/state/x"                    2 "$(call p1 Bash "$(bj "echo x > /??/$H/.claude/state/x")")"
+  expect "E2 deny (NT prefix, PowerShell): Set-Content \\??\\$W0\\.claude\\state\\x"    2 "$(call p1 PowerShell "$(bj "Set-Content -Path \\??\\$W0\\.claude\\state\\x -Value x")")"
+  expect "E2 allow: control, Write \\??\\$W0\\notes.txt"                                 0 "$(wr p2 "\\??\\$W0\\notes.txt")"
+  expect "E0 deny (NT prefix, volume): Write \\??\\Volume{00000000-0000-0000-0000-000000000000}\\x" 2 "$(wr p1 "\\??\\Volume{00000000-0000-0000-0000-000000000000}\\x")"
+  expect "E0 deny (NT prefix, UNC): Write \\??\\UNC\\localhost\\$DRV\$$R0\\.claude\\state\\x" 2 "$(wr p1 "\\??\\UNC\\localhost\\$DRV\$$R0\\.claude\\state\\x")"
+  expect "E0 deny (doubled separator): Write \\\\localhost\\\\$DRV\$$R0\\.claude\\state\\x" 2 "$(wr p3 "\\\\localhost\\\\$DRV\$$R0\\.claude\\state\\x")"
+  expect "E0 deny (doubled separator): Write //localhost//$DRV\$/.../.claude/state/x"   2 "$(wr p3 "//localhost//$DRV\$$(echo "$R0" | tr '\\' '/')/.claude/state/x")"
+  expect "E0 deny (doubled separator, Bash): echo x > //localhost//$DRV\$/..."          2 "$(call p3 Bash "$(bj "echo x > //localhost//$DRV\$$(echo "$R0" | tr '\\' '/')/.claude/state/x")")"
+  mklink junction "$HERE/lkc" "$HERE/.claude/state"
+  expect "E2 deny (case): Write LKC/field-ledger.jsonl, junction made as lkc"           2 "$(wr q1 "LKC/field-ledger.jsonl")"
+  expect "E2 deny (case): Bash echo x > Lkc/x"                                          2 "$(call q1 Bash "$(bj "echo x > Lkc/x")")"
+  expect "E2 deny (bare drive root): CLAUDE_PROJECT_DIR=$DRV: Write field-manifest.yaml" 2 "$(cd "$HERE"; CLAUDE_PROJECT_DIR="$DRV:" wr q2 "field-manifest.yaml")"
+  expect "E2 allow (bare drive root): control, Write notes.txt"                          0 "$(cd "$HERE"; CLAUDE_PROJECT_DIR="$DRV:" wr q2 "notes.txt")"
 
   # J. a symlink or junction loop: Python's lenient realpath returns the path unresolved for it (a gate that relied on it would
   # allow); the gate resolves strictly and must deny. Junction loop: A -> S, B -> A, drop A, A -> B.
