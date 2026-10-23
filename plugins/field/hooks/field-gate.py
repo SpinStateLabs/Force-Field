@@ -431,12 +431,45 @@ def path_key(raw, root):
     return "sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+_LINK_CACHE = {}
+
+
+def _root_links(root):
+    """POSIX: the names of the symlinks directly under the project root (dangling ones included), from one cached
+    listing, so a command of thousands of words costs one scandir. None when the root cannot be listed or holds
+    more than _LIST_MAX entries: the caller then asks the file system about each word."""
+    key = str(root)
+    if key not in _LINK_CACHE:
+        links = set()
+        try:
+            with os.scandir(key) as it:
+                for n, entry in enumerate(it, 1):
+                    if n > _LIST_MAX:
+                        links = None
+                        break
+                    if entry.is_symlink():
+                        links.add(entry.name)
+        except OSError:
+            links = None
+        _LINK_CACHE[key] = links
+    return _LINK_CACHE[key]
+
+
 def _bare_name_resolves(s, root):
-    """Windows: a bare word (no '/', so not otherwise resolved) that names an entry of the project root, or that
-    Win32 would read differently (stream, trailing dot), is resolved like a path: `echo x >> link` writes through a
-    link. Uses the cached root listing, so a command of thousands of words costs one listing."""
-    if os.name != "nt" or s.startswith("-") or any(c in s for c in '*?<>|"'):
+    """A bare word (no '/', so not otherwise resolved) that names a link in the project root, or that Win32 would
+    read differently (stream, trailing dot), is resolved like a path: `echo x >> link` writes through a link.
+    Windows: any entry of the root (links and 8.3 aliases cannot be told apart cheaply). POSIX (since ADR-0080,
+    PR 14): only a symlink, dangling or not, so a plain bare word is never resolved and a command that names no
+    link is judged exactly as before. Both use one cached root listing."""
+    if s.startswith("-") or any(c in s for c in '*?<>|"'):
         return False
+    if os.name != "nt":
+        if s in (".", ".."):
+            return False
+        links = _root_links(root)
+        if links is None:
+            return os.path.islink(os.path.join(str(root), s))
+        return s in links
     if _win_clean(s) != s:
         return True
     try:

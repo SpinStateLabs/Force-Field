@@ -227,5 +227,128 @@ g._LIST_CACHE.clear()
 import shutil
 shutil.rmtree(d, ignore_errors=True)
 shutil.rmtree(d2, ignore_errors=True)
+# ---- 5. bare words that name a link (PR 14): `echo x >> link` writes through the link ----
+bd = tempfile.mkdtemp(prefix="canon_bare_")
+os.makedirs(os.path.join(bd, "sub"))
+open(os.path.join(bd, "plain"), "w").close()
+if os.name != "nt":
+    os.symlink(os.path.join(bd, ".claude", "state", "newf"), os.path.join(bd, "dl"))   # dangling
+    os.symlink(os.path.join(bd, "sub"), os.path.join(bd, "lv"))                         # live
+    for cap, label in ((100000, "cached listing"), (0, "per-word lstat fallback (root over _LIST_MAX)")):
+        old_max = g._LIST_MAX
+        g._LIST_MAX = cap
+        g._LINK_CACHE.clear()
+        try:
+            check("bare word naming a dangling symlink resolves (%s)" % label, True, g._bare_name_resolves("dl", bd))
+            check("bare word naming a live symlink resolves (%s)" % label, True, g._bare_name_resolves("lv", bd))
+            check("bare word naming a plain file does not resolve (%s)" % label, False, g._bare_name_resolves("plain", bd))
+            check("bare word naming a plain directory does not resolve (%s)" % label, False, g._bare_name_resolves("sub", bd))
+            check("bare word naming nothing does not resolve (%s)" % label, False, g._bare_name_resolves("nope", bd))
+            check("bare flag, glob and dot words do not resolve (%s)" % label, [False] * 4,
+                  [g._bare_name_resolves(w, bd) for w in ("-x", "*", ".", "..")])
+        finally:
+            g._LIST_MAX = old_max
+    g._LINK_CACHE.clear()
+    check("_path_forms: a bare link name gains its resolved form", True,
+          any(f.endswith("/.claude/state/newf") for f in g._path_forms("dl", bd)))
+    check("_path_forms: a plain bare word stays exactly as given", ["plain"], g._path_forms("plain", bd))
+    g._LINK_CACHE.clear()
+    check("_root_links: the listing holds links only", {"dl", "lv"}, g._root_links(bd))
+else:
+    print("N/A  bare-word link cases (POSIX branch): run on POSIX; Windows keeps its any-entry rule")
+shutil.rmtree(bd, ignore_errors=True)
+
+# ---- 6. Windows: a dangling junction/symlink whose target is spelled differently from the resolved root ----
+# CI (windows-latest) hit `manifest rule ^secrets/ via dd/x` allowed: the project lives under C:\Users\RUNNER~1\...
+# (8.3 spelling of runneradmin) and `mklink` stored that spelling as the link target. Not reproducible locally (this
+# volume has no 8.3 names, Python 3.12.12 and 3.14 resolve the existing prefix of a dangling target), so the
+# case is built two ways: a target spelled through an ALIAS junction to the root (a different spelling of the same
+# directory on every Windows volume), and, where the volume has 8.3 names, the real short spelling. The
+# lenient realpath is also replaced by one that returns the link text verbatim, which is what the failing runner
+# is believed to do; with the dangling re-resolve in `_win_real` removed these cases turn red.
+if os.name == "nt":
+    import ctypes
+    import subprocess
+
+    def short_name(p):
+        buf = ctypes.create_unicode_buffer(1024)
+        ctypes.windll.kernel32.GetShortPathNameW(p, buf, 1024)
+        return buf.value or p
+
+    def lenient_verbatim(path, strict=False):
+        if strict:
+            return real_rp(path, strict=True)
+        try:
+            tgt = os.readlink(path)
+        except OSError:
+            return real_rp(path)
+        return tgt[4:] if tgt.startswith(BS * 2 + "?" + BS) else tgt
+
+    wd = tempfile.mkdtemp(prefix="canon_dang_")
+    proj = os.path.join(wd, "proj_with_a_long_name")
+    os.makedirs(os.path.join(proj, "secrets", "newd"))
+    alias = os.path.join(wd, "alias")
+    mk = subprocess.run(["cmd", "/c", "mklink", "/J", alias, proj], capture_output=True, text=True)
+    check("fixture: alias junction to the project made", 0, mk.returncode)
+    spellings = [("alias junction", os.path.join(alias, "secrets", "newd"))]
+    sp = short_name(proj)
+    if sp.casefold() != proj.casefold():
+        spellings.append(("8.3 short name", os.path.join(sp, "secrets", "newd")))
+    else:
+        print("N/A  8.3 short-name spelling: this volume has no short names (the alias junction stands in)")
+    want_dir = real_rp(proj, strict=True)
+    for label, tgt in spellings:
+        for kind in ("/J", "/D"):
+            lnk = os.path.join(proj, "dd" + kind[1])
+            mk = subprocess.run(["cmd", "/c", "mklink", kind, lnk, tgt], capture_output=True, text=True)
+            if mk.returncode != 0:
+                check("fixture: mklink %s (%s) made" % (kind, label), 0, mk.returncode)
+                continue
+            os.rmdir(os.path.join(proj, "secrets", "newd"))
+            want = BS.join([want_dir, "secrets", "newd", "x"]).casefold()
+            for mode, rp in (("real realpath", real_rp), ("verbatim link text", lenient_verbatim)):
+                g._REAL_CACHE.clear()
+                g._LIST_CACHE.clear()
+                os.path.realpath = rp
+                try:
+                    got = g._win_real(lnk + BS + "x").casefold()
+                finally:
+                    os.path.realpath = real_rp
+                check("dangling %s via %s: target converges with the resolved root (%s)" % (kind, label, mode), want, got)
+            g._ROOT_CACHE.clear()
+            rootn = g._root_norm(proj)[0]
+            os.path.realpath = lenient_verbatim
+            g._REAL_CACHE.clear()
+            g._LIST_CACHE.clear()
+            try:
+                forms = g._abs_norm("dd" + kind[1] + "/x", proj)[0]
+            finally:
+                os.path.realpath = real_rp
+            check("dangling %s via %s: _abs_norm lands under the root as secrets/newd/x" % (kind, label),
+                  True, forms == rootn + "/secrets/newd/x")
+            os.rmdir(lnk) if kind == "/J" else os.remove(lnk)
+            os.makedirs(os.path.join(proj, "secrets", "newd"))
+    # a chain of dangling links and a loop stay bounded
+    a, b = os.path.join(proj, "ca"), os.path.join(proj, "cb")
+    for lk, tg in ((a, b), (b, a)):
+        subprocess.run(["cmd", "/c", "mklink", "/D", lk, tg], capture_output=True)
+    g._REAL_CACHE.clear()
+    try:
+        g._win_real(a + BS + "x")
+        got = "returned"
+    except OSError:
+        got = "raises"
+    check("dangling link loop raises OSError (E0 deny), never hangs", "raises", got)
+    for lk in (a, b):
+        try:
+            os.remove(lk)
+        except OSError:
+            pass
+    os.rmdir(alias)
+    shutil.rmtree(wd, ignore_errors=True)
+    g._REAL_CACHE.clear()
+    g._LIST_CACHE.clear()
+else:
+    print("N/A  dangling-link spelling cases: Windows only")
 
 sys.exit(1 if fail else 0)

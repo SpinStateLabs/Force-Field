@@ -66,6 +66,13 @@ mklink() { # kind(junction|symlink) link target -> 0 made, 1 refused (reason in 
   [ -e "$2" ] || { LINK_ERR="link created but not visible: $2"; return 1; }
 }
 
+# stale fixtures: a run that was killed (SIGKILL, closed terminal, CI cancel) cannot run its EXIT trap and leaves its links in this
+# directory, and `mklink` then fails with "Cannot create a file when that file already exists". Remove the fixed link names first
+# (rmlink, never rm -rf: a junction can be followed into its target). These names are not tracked files.
+for n in dj dl_set dl_state lk_junction lk_symlink up_junction up_symlink ex_junction ex_symlink ok_junction ok_symlink; do
+  if [ -L "$n" ] || [ -e "$n" ]; then rmlink "$HERE/$n"; fi
+done
+
 # fixture
 rm -rf .claude; mkdir -p .claude/state "$T/exdir" "$T/okdir" "$T/plain"
 echo keep > "$T/exdir/sentinel"; echo keep > "$T/okdir/sentinel"; echo keep > .claude/state/sentinel
@@ -136,11 +143,10 @@ for K in $KINDS; do
       expect "E2 deny (dangling symlink): Write <abs>/dl_state"                                2 "$(wr n1 "$H/dl_state")"
       expect "E2 deny (dangling symlink): Write dl_set -> .claude/settings.json"               2 "$(wr n1 "dl_set")"
       expect "E2 deny (dangling symlink): Edit dl_set"                                         2 "$(call n1 Edit "$(jt file_path dl_set | sed 's/}$/,"old_string":"a","new_string":"b"}/')")"
-      if is_windows; then   # POSIX: bare words are not link-resolved (unchanged); see the README register
-        expect "E2 deny (dangling symlink): Bash echo x >> dl_state (bare name)"                 2 "$(call n1 Bash "$(bj "echo x >> dl_state")")"
-        expect "E2 deny (dangling symlink): Bash tee -a dl_state (bare name)"                    2 "$(call n1 Bash "$(bj "echo x | tee -a dl_state")")"
+    # bare words that name a link are resolved on both platforms (ADR-0080)
+      expect "E2 deny (dangling symlink): Bash echo x >> dl_state (bare name)"                 2 "$(call n1 Bash "$(bj "echo x >> dl_state")")"
+      expect "E2 deny (dangling symlink): Bash tee -a dl_state (bare name)"                    2 "$(call n1 Bash "$(bj "echo x | tee -a dl_state")")"
         expect "E2 deny (dangling symlink): PowerShell Set-Content -Path dl_state"               2 "$(call n1 PowerShell "$(bj "Set-Content -Path dl_state -Value x")")"
-      fi
     else
       echo "FAIL  dangling file symlinks cannot be made: $(echo "$LINK_ERR" | head -n 1)"; fail=1
     fi
