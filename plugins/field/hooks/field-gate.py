@@ -240,28 +240,60 @@ def tool_call_budget(enf):
 _ROOT_CACHE = {}
 
 
+def _win_clean(s):
+    """Windows path text that Win32 reads as the same file, made literal (ADR-0080). `s` is already
+    '/'-separated. Drops the extended-length prefix (//?/ or //./; //?/UNC/ becomes //), maps Git
+    Bash /c/ to C:/, and per component drops an NTFS stream suffix (file::$DATA, file:ads,
+    dir::$INDEX_ALLOCATION) and trailing dots and spaces (Win32 opens `file.` and `file ` as
+    `file`). Text only; no file system access."""
+    m = re.match(r"^//[?.]/(UNC/)?", s, re.I)
+    if m:
+        s = ("//" if m.group(1) else "") + s[m.end():]
+    s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
+    drive = ""
+    if re.match(r"^[A-Za-z]:", s):
+        drive, s = s[:2], s[2:]
+    parts = []
+    for p in s.split("/"):
+        if p not in ("", ".", ".."):
+            p = p.split(":", 1)[0].rstrip(". ")
+        parts.append(p)
+    return drive + "/".join(parts)
+
+
 def _root_norm(root):
     """(normalised project root, win). Windows is detected from a drive letter or os.name; there
-    the root is case-folded, on POSIX symlinks are resolved. Cached: called once per token."""
+    the root is case-folded and cleaned (_win_clean). Links are resolved with realpath on POSIX
+    and, since ADR-0080, on Windows too (symlinks, junctions, 8.3 short names). Cached: called
+    once per token."""
     key = str(root)
     if key not in _ROOT_CACHE:
         win = bool(re.match(r"^[A-Za-z]:", _norm(key))) or os.name == "nt"
-        rootn = posixpath.normpath(_norm(key if win else os.path.realpath(key)))
+        if os.name == "nt":
+            rootn = posixpath.normpath(_win_clean(_norm(os.path.realpath(_win_clean(_norm(key))))))
+        elif win:
+            rootn = posixpath.normpath(_win_clean(_norm(key)))
+        else:
+            rootn = posixpath.normpath(_norm(os.path.realpath(key)))
         _ROOT_CACHE[key] = (rootn.casefold() if win else rootn, win)
     return _ROOT_CACHE[key]
 
 
 def _abs_norm(raw, root):
     """(normalised absolute POSIX-style path, normalised root). ~ expanded, backslashes to '/',
-    relative paths joined to the root, Git Bash /c/ mapped to C:/ and case folded on Windows,
-    symlinks and '..' resolved on POSIX (realpath), then normpath."""
+    relative paths joined to the root, on Windows Git Bash /c/ mapped to C:/, extended-length
+    prefixes, NTFS streams and trailing dots/spaces removed (_win_clean) and the result case
+    folded; symlinks and '..' resolved by realpath (on Windows that covers junctions and 8.3
+    short names, ADR-0080), then normpath. A realpath error propagates: main() denies E0."""
     rootn, win = _root_norm(root)
     s = _norm(os.path.expanduser(str(raw or ""))).strip()
     if win:
-        s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
+        s = _win_clean(s)
     if not (s.startswith("/") or re.match(r"^[A-Za-z]:/", s)):
         s = rootn + "/" + s
-    if not win:
+    if os.name == "nt":
+        s = _win_clean(_norm(os.path.realpath(s)))
+    elif not win:
         s = _norm(os.path.realpath(s))
     s = posixpath.normpath(s)
     return (s.casefold() if win else s), rootn

@@ -15,6 +15,10 @@ expect() { # label expected actual
 }
 pj() { python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "$1"; }
 is_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0;; *) return 1;; esac; }
+# dirlink <link> <target> / rmdirlink <link>: a directory link. POSIX: ln -s. Windows: a junction (mklink /J, needs no
+# privilege). rmdir removes a junction without following it (rm -rf on one can delete the target's contents).
+dirlink() { if is_windows; then MSYS2_ARG_CONV_EXCL='*' cmd /c "mklink /J $(cygpath -w "$1") $(cygpath -w "$2")" >/dev/null; else ln -s "$2" "$1"; fi; }
+rmdirlink() { if is_windows; then MSYS2_ARG_CONV_EXCL='*' cmd /c "rmdir $(cygpath -w "$1")" >/dev/null; else rm -f "$1"; fi; }
 run_suite() {
   rm -rf .claude
   export CLAUDE_PROJECT_DIR="$PWD"
@@ -61,11 +65,10 @@ expect "other session may run t3's ./git"    0 "$(call t2 Bash '{"command":"./gi
 # path_key must canonicalise ('..' and symlinks): dropping normpath/realpath passed every case before 1.2.3
 expect "E5 deny: bash ./sub/../x.sh"         2 "$(call t1 Bash '{"command":"bash ./sub/../x.sh"}')"
 expect "E5 deny: python3 a/b/../../x.py"     2 "$(call t1 Bash '{"command":"python3 a/b/../../x.py"}')"
-if is_windows; then echo "SKIP  E5 symlinked project root (Windows)"; else
-  L=$(mktemp -d); ln -s "$HERE" "$L/rootlink"
-  expect "E5 deny: bash <symlink-to-root>/x.sh" 2 "$(call t1 Bash '{"command":"bash '"$L"'/rootlink/x.sh"}')"
-  rm -rf "$L"
-fi
+# a linked project root (ADR-0080: a junction on Windows, where this case used to be skipped)
+L=$(mktemp -d); dirlink "$L/rootlink" "$HERE"
+expect "E5 deny: bash <link-to-root>/x.sh" 2 "$(call t1 Bash '{"command":"bash '"$(abspath "$L")"'/rootlink/x.sh"}')"
+rmdirlink "$L/rootlink"; rm -rf "$L"
 # a read-only tool configured to run a session-written file (field 1.2.5): the tool's own arguments are
 # not checked, but a program or config value handed to it, or an environment assignment, is
 pj() { python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "$1"; }
@@ -197,11 +200,9 @@ expect "E2 deny: NotebookEdit .claude/state/x.ipynb"                2 "$(call e2
 expect "E2 deny: MCP ./.claude/state/../state/field-ledger.jsonl"   2 "$(call e2w mcp__fs__write_file '{"path":"./.claude/state/../state/field-ledger.jsonl","content":"x"}')"
 expect "E2 deny: MCP .claude/state/x.json"                          2 "$(call e2w mcp__fs__write_file '{"path":".claude/state/x.json","content":"x"}')"
 expect "E2 deny: Write ./docs/../field-manifest.yaml"               2 "$(call e2w Write '{"file_path":"./docs/../field-manifest.yaml","content":"x"}')"
-if is_windows; then echo "SKIP  E2 symlink to the state dir (Windows)"; else
-  ln -s .claude/state "$HERE/statelink"
-  expect "E2 deny: Write statelink/field-ledger.jsonl (symlink to the state dir)" 2 "$(call e2w Write '{"file_path":"statelink/field-ledger.jsonl","content":"x"}')"
-  rm "$HERE/statelink"
-fi
+if is_windows; then dirlink "$HERE/statelink" "$HERE/.claude/state"; else ln -s .claude/state "$HERE/statelink"; fi
+expect "E2 deny: Write statelink/field-ledger.jsonl (link to the state dir)" 2 "$(call e2w Write '{"file_path":"statelink/field-ledger.jsonl","content":"x"}')"
+rmdirlink "$HERE/statelink"
 expect "E2 allow: Write ./docs/../README.md"             0 "$(call e2w Write '{"file_path":"./docs/../README.md","content":"x"}')"
 expect "E2 allow: Write .claude/state/KILL (/field kill)" 0 "$(call e2w Write '{"file_path":".claude/state/KILL","content":""}')"
 expect "E2 allow: Write .claude/state/field.json (skill state)" 0 "$(call e2w Write '{"file_path":".claude/state/field.json","content":"{}"}')"

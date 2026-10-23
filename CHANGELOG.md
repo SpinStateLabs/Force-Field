@@ -8,6 +8,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## [Unreleased]
 
+### Fixed (gate, ADR-0080; not yet released, no version bump)
+
+- **field-gate.py resolves symlinks and junctions on Windows.** `_abs_norm` and `_root_norm` called `realpath` only off Windows, so a link already in the project that pointed at `.claude/state` or the manifest hid the target from E2 (and a file written through a link was not the same file to E5). On Windows (`os.name == "nt"`) both now call `os.path.realpath` (tested here on Python 3.14: it resolves `mklink /J` junctions, `mklink /D` symlinks and 8.3 short names). A new `_win_clean` also removes the `\\?\` / `//?/` prefix, NTFS stream suffixes (`file::$DATA`, `file:ads`) and trailing dots and spaces before the match. POSIX behaviour is unchanged. A `realpath` error propagates to `main()` and denies E0.
+- **CI runs the gate suites on `windows-latest`** (job `gate-tests-windows`, Git Bash) through `hooks/test/run_all.sh`: every suite must pass, the SKIP lines must equal `hooks/test/skip-allowlist-windows.txt`, and `field-gate.sh` / `field-post.sh` must contain no carriage return. New suite `run_links.sh` (also run on ubuntu). `run_e5.sh` no longer skips the linked-root and state-dir-link cases on Windows (a junction is used there).
+- Workflow: `permissions: contents: read`, actions pinned to commit SHAs.
+
 ### Planned
 
 - FORCE v1.1 refinements based on real-world usage feedback.
