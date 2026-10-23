@@ -123,7 +123,11 @@ if is_windows; then
   expect "E2 allow: control, Write notes.txt::\$DATA"            0 "$(wr f4 "$H/notes.txt::\$DATA")"
   expect "E2 allow: control, Write notes.txt:ads"                0 "$(wr f4 "$H/notes.txt:ads")"
   expect "E2 allow: control, Write \\\\?\\$W\\notes.txt"         0 "$(wr f4 "\\\\?\\$W\\notes.txt")"
-  # 8.3 short names: GetShortPathNameW (python) because the volume may have 8.3 generation off
+  # 8.3 short names. The fixture is a second project under the temp directory, created now, so the case does not depend
+  # on whether the volume holding the checkout generates 8.3 names (the hosted runner's D: does not). GetShortPathNameW
+  # (python) reports the alias; if the temp volume has none either, the case prints an explicit SKIP.
+  P="$T/long project directory"; PA=$(abspath "$P"); mkdir -p "$P/.claude/state"; cp field-manifest.yaml "$P/"
+  W=$(cygpath -w "$P")
   SHORT=$(python3 - "$W" <<'PYEOF'
 import ctypes, os, sys
 w = sys.argv[1]
@@ -137,12 +141,12 @@ PYEOF
 )
   SD=$(echo "$SHORT" | sed -n 1p | tr -d '\r'); SM=$(echo "$SHORT" | sed -n 2p | tr -d '\r')
   if [ "$SD" != "-" ] && [ "$(basename "$(cygpath -u "$SD")")" != ".claude" ]; then
-    expect "E2 deny (8.3): Write $(basename "$(cygpath -u "$SD")")/state/field-ledger.jsonl" 2 "$(wr g1 "$(cygpath -m "$SD")/state/field-ledger.jsonl")"
+    expect "E2 deny (8.3): Write $(basename "$(cygpath -u "$SD")")/state/field-ledger.jsonl" 2 "$(CLAUDE_PROJECT_DIR=$PA wr g1 "$(cygpath -m "$SD")/state/field-ledger.jsonl")"
   else
     echo "SKIP  8.3 short name of .claude: volume has 8.3 name generation off"; echo "      reason: GetShortPathNameW returned no alias for $W\\.claude"
   fi
   if [ "$SM" != "-" ] && [ "$(basename "$(cygpath -u "$SM")")" != "field-manifest.yaml" ]; then
-    expect "E2 deny (8.3): Write $(basename "$(cygpath -u "$SM")")" 2 "$(wr g1 "$(cygpath -m "$SM")")"
+    expect "E2 deny (8.3): Write $(basename "$(cygpath -u "$SM")")" 2 "$(CLAUDE_PROJECT_DIR=$PA wr g1 "$(cygpath -m "$SM")")"
   else
     echo "SKIP  8.3 short name of field-manifest.yaml: volume has 8.3 name generation off"; echo "      reason: GetShortPathNameW returned no alias for $W\\field-manifest.yaml"
   fi
