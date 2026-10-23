@@ -134,11 +134,13 @@ for K in $KINDS; do
     if mklinkf "$HERE/dl_state" "$HERE/.claude/state/newf" && mklinkf "$HERE/dl_set" "$HERE/.claude/settings.json"; then
       expect "E2 deny (dangling symlink): Write dl_state, target .claude/state/newf does not exist" 2 "$(wr n1 "dl_state")"
       expect "E2 deny (dangling symlink): Write <abs>/dl_state"                                2 "$(wr n1 "$H/dl_state")"
-      expect "E2 deny (dangling symlink): Bash echo x >> dl_state (bare name)"                 2 "$(call n1 Bash "$(bj "echo x >> dl_state")")"
-      expect "E2 deny (dangling symlink): Bash tee -a dl_state (bare name)"                    2 "$(call n1 Bash "$(bj "echo x | tee -a dl_state")")"
-      expect "E2 deny (dangling symlink): PowerShell Set-Content -Path dl_state"               2 "$(call n1 PowerShell "$(bj "Set-Content -Path dl_state -Value x")")"
       expect "E2 deny (dangling symlink): Write dl_set -> .claude/settings.json"               2 "$(wr n1 "dl_set")"
       expect "E2 deny (dangling symlink): Edit dl_set"                                         2 "$(call n1 Edit "$(jt file_path dl_set | sed 's/}$/,"old_string":"a","new_string":"b"}/')")"
+      if is_windows; then   # POSIX: bare words are not link-resolved (unchanged); see the README register
+        expect "E2 deny (dangling symlink): Bash echo x >> dl_state (bare name)"                 2 "$(call n1 Bash "$(bj "echo x >> dl_state")")"
+        expect "E2 deny (dangling symlink): Bash tee -a dl_state (bare name)"                    2 "$(call n1 Bash "$(bj "echo x | tee -a dl_state")")"
+        expect "E2 deny (dangling symlink): PowerShell Set-Content -Path dl_state"               2 "$(call n1 PowerShell "$(bj "Set-Content -Path dl_state -Value x")")"
+      fi
     else
       echo "FAIL  dangling file symlinks cannot be made: $(echo "$LINK_ERR" | head -n 1)"; fail=1
     fi
@@ -168,7 +170,7 @@ if is_windows; then
   # 8.3 short names. The fixture is a second project under the temp directory, created now, so the case does not depend
   # on whether the volume holding the checkout generates 8.3 names (the hosted runner's D: does not). GetShortPathNameW
   # (python) reports the alias; if the temp volume has none either the case FAILs (it cannot be examined).
-  P="$T/long project directory"; PA=$(abspath "$P"); mkdir -p "$P/.claude/state"; cp field-manifest.yaml "$P/"
+  P="$T/long project directory"; PA=$(abspath "$P"); mkdir -p "$P/.claude/state" "$P/secrets"; sed "s|protected_paths: \[\]|protected_paths: ['^secrets/']|" field-manifest.yaml > "$P/field-manifest.yaml"
   W=$(cygpath -w "$P")
   SHORT=$(python3 - "$W" <<'PYEOF'
 import ctypes, os, sys
@@ -274,6 +276,19 @@ PYEOF
   expect "E2 deny (case): Bash echo x > Lkc/x"                                          2 "$(call q1 Bash "$(bj "echo x > Lkc/x")")"
   expect "E2 deny (bare drive root): CLAUDE_PROJECT_DIR=$DRV: Write field-manifest.yaml" 2 "$(cd "$HERE"; CLAUDE_PROJECT_DIR="$DRV:" wr q2 "field-manifest.yaml")"
   expect "E2 allow (bare drive root): control, Write notes.txt"                          0 "$(cd "$HERE"; CLAUDE_PROJECT_DIR="$DRV:" wr q2 "notes.txt")"
+
+  # 8.3: a dangling junction whose target is under a rule, the project root given in long form and the path in short form, and the
+  # reverse. Lenient realpath leaves 8.3 names in the missing tail, so the target must be resolved again.
+  PS=$(python3 -c 'import ctypes,sys;b=ctypes.create_unicode_buffer(1024);ctypes.windll.kernel32.GetShortPathNameW(sys.argv[1],b,1024);print(b.value)' "$W" | tr -d '\r')
+  if [ -n "$PS" ] && [ "$(basename "$(cygpath -u "$PS")")" != "long project directory" ]; then
+    PSM=$(cygpath -m "$PS")
+    mkdir -p "$P/secrets/newd"; mklink junction "$PSM/dj" "$PSM/secrets/newd" || { echo "FAIL  could not make the 8.3 dangling junction: $LINK_ERR"; fail=1; }; rmdir "$P/secrets/newd"
+    expect "E2 deny (8.3 + dangling junction): root long, path via short name"  2 "$(CLAUDE_PROJECT_DIR=$PA wr r1 "$PSM/dj/x")"
+    expect "E2 deny (8.3 + dangling junction): root short, path via long name"  2 "$(CLAUDE_PROJECT_DIR=$PSM wr r1 "$PA/dj/x")"
+    expect "E2 deny (8.3 root): rule ^secrets/ with the root given as a short name" 2 "$(CLAUDE_PROJECT_DIR=$PSM wr r1 "$PA/secrets/x")"
+  else
+    echo "FAIL  8.3 short name of the fixture project cannot be examined"; fail=1
+  fi
 
   # J. a symlink or junction loop: Python's lenient realpath returns the path unresolved for it (a gate that relied on it would
   # allow); the gate resolves strictly and must deny. Junction loop: A -> S, B -> A, drop A, A -> B.

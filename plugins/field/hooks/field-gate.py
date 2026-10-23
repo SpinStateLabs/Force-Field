@@ -316,7 +316,7 @@ def _absent(parent, name):
     return names is not None and name.casefold() not in names
 
 
-def _win_real(s):
+def _win_real(s, _hops=0):
     """Windows: realpath of `s` (symlinks, junctions, 8.3 names), strictly. `..` is collapsed first, as
     Win32 does. The longest existing prefix is resolved and the rest appended. A dangling symlink or junction is
     followed as far as it goes (it may point at a protected file that does not exist yet). An error that means
@@ -349,6 +349,11 @@ def _win_real(s):
             dots = len(name) > 2 and not name.strip(".")
             if not dots and os.path.lexists(cur):  # dangling link: follow it as far as it goes
                 out = os.path.realpath(cur)
+                # lenient realpath leaves 8.3 names in the missing tail; resolve the target again
+                if ntpath.normpath(out).casefold() != cur.casefold():
+                    if _hops > 20:
+                        raise OSError("too many dangling-link hops: " + cur)
+                    out = _win_real(out, _hops + 1)
             else:
                 out = cur if (not name or parent == cur) else ntpath.join(_win_real(parent), name)
         elif werr in _WIN_OPAQUE:
