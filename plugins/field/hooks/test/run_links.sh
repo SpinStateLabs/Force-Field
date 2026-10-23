@@ -4,8 +4,9 @@
 # gate. On Windows the gate also has to see through the other spellings Win32 treats as the same file: a
 # \\?\ prefix, an NTFS stream (file::$DATA), a trailing dot or space, and an 8.3 short name.
 #   junction: created with `mklink /J` (no privilege needed). symlink: `mklink /D` on Windows, `ln -s` on POSIX.
-#   If the OS refuses to create a symlink, the symlink cases print an explicit SKIP with the reason (never silent);
-#   the SKIP allowlist in the CI driver (run_all.sh) decides whether that is acceptable.
+#   A case that cannot run (the OS refuses to create a link, the volume has no 8.3 names, a volume or device path cannot be
+#   read) is a FAIL, never a SKIP: an unexamined alias is an unproven control. The CI SKIP allowlist (skip-allowlist-windows.txt,
+#   checked by run_all.sh) holds only the ledger mode check in run_e5.sh.
 #   "N/A" lines are cases that do not exist on this platform (not a skip: nothing to test here).
 # Prints PASS/FAIL per case and exits non-zero if any case fails.
 set -u
@@ -22,11 +23,11 @@ call() { # session tool json-input -> prints exit code
   if [ "$rc" = 2 ] && ! grep -q '^FIELD DENY \[' "$ERRF"; then rc=99; fi
   echo "$rc"
 }
-expect() { # label expected actual; a deny must also come from the rule the label names (E2 or E5); a FAIL shows the gate's reason
+expect() { # label expected actual; a deny must also come from the rule the label names (E0, E2 or E5); a FAIL shows the gate's reason
   local rule; rule=${1%% *}; local ok=0
   if [ "$2" = "$3" ]; then
     ok=1
-    if [ "$2" = 2 ]; then case "$rule" in E2|E5) grep -q "^FIELD DENY \[$rule\]" "$ERRF" || ok=0;; esac; fi
+    if [ "$2" = 2 ]; then case "$rule" in E0|E2|E5) grep -q "^FIELD DENY \[$rule\]" "$ERRF" || ok=0;; esac; fi
   fi
   if [ "$ok" = 1 ]; then echo "PASS  $1"; else echo "FAIL  $1 (expected $2, got $3)"; echo "      gate said: $(head -c 300 "$ERRF" | tr '\n' ' ')"; fail=1; fi
 }
@@ -62,11 +63,15 @@ rm -rf .claude; mkdir -p .claude/state "$T/exdir" "$T/okdir" "$T/plain"
 echo keep > "$T/exdir/sentinel"; echo keep > "$T/okdir/sentinel"; echo keep > .claude/state/sentinel
 export CLAUDE_PROJECT_DIR="$HERE"
 H=$(abspath "$HERE"); TA=$(abspath "$T")
+# a second governed project with a manifest rule anchored at its root (protected_paths ^secrets/)
+P2="$T/proj2"; P2A=$(abspath "$P2"); mkdir -p "$P2/.claude/state" "$P2/secrets" "$P2/other"
+sed "s|protected_paths: \[\]|protected_paths: ['^secrets/']|" field-manifest.yaml > "$P2/field-manifest.yaml"
+grep -q "secrets/" "$P2/field-manifest.yaml" || { echo "FAIL  fixture: protected_paths rule not written"; fail=1; }
 
 if is_windows; then KINDS="junction symlink"; else KINDS="symlink"; echo "N/A  junction cases: junctions exist on Windows only"; fi
 for K in $KINDS; do
   if ! mklink "$K" "$HERE/lk_$K" "$HERE/.claude/state"; then
-    echo "SKIP  Windows $K cases: OS refused to create a $K"; echo "      reason: $(echo "$LINK_ERR" | head -n 1)"; continue
+    echo "FAIL  $K cases cannot run: OS refused to create a $K (Windows: run elevated or enable Developer Mode)"; echo "      reason: $(echo "$LINK_ERR" | head -n 1)"; fail=1; continue
   fi
   mklink "$K" "$HERE/up_$K" "$HERE"
   mklink "$K" "$HERE/ex_$K" "$T/exdir"
@@ -103,6 +108,12 @@ for K in $KINDS; do
   expect "E2 deny ($K): root behind a link, Write .claude/state/field-ledger.jsonl"     2 "$(CLAUDE_PROJECT_DIR=$TA/root_$K wr e2 .claude/state/field-ledger.jsonl)"
   expect "E2 deny ($K): root behind a link, Write <real root>/field-manifest.yaml"      2 "$(CLAUDE_PROJECT_DIR=$TA/root_$K wr e2 "$H/field-manifest.yaml")"
   expect "E2 deny ($K): root behind a link, Write field-manifest.yaml"                  2 "$(CLAUDE_PROJECT_DIR=$TA/root_$K wr e2 field-manifest.yaml)"
+  # E2'. a manifest rule anchored at the project root, reached by its real path while the root is given as a link:
+  # only a resolved root makes <real root>/secrets/x root-relative, so this case turns red when root resolution is dropped.
+  mklink "$K" "$T/rp_$K" "$P2"
+  expect "E2 deny ($K): custom protected path ^secrets/ via <real root>/secrets/x, root given as a link" 2 "$(CLAUDE_PROJECT_DIR=$TA/rp_$K wr h1 "$P2A/secrets/x")"
+  expect "E2 deny ($K): custom protected path ^secrets/ via <link>/secrets/x"            2 "$(CLAUDE_PROJECT_DIR=$TA/rp_$K wr h1 "$TA/rp_$K/secrets/x")"
+  expect "E2 allow ($K): control, <real root>/other/x with the same root link"          0 "$(CLAUDE_PROJECT_DIR=$TA/rp_$K wr h1 "$P2A/other/x")"
 done
 
 # F. Windows spellings of one file (ADR-0080 / proposal 02 item M1). Not reachable on POSIX, where they are different names.
@@ -125,7 +136,7 @@ if is_windows; then
   expect "E2 allow: control, Write \\\\?\\$W\\notes.txt"         0 "$(wr f4 "\\\\?\\$W\\notes.txt")"
   # 8.3 short names. The fixture is a second project under the temp directory, created now, so the case does not depend
   # on whether the volume holding the checkout generates 8.3 names (the hosted runner's D: does not). GetShortPathNameW
-  # (python) reports the alias; if the temp volume has none either, the case prints an explicit SKIP.
+  # (python) reports the alias; if the temp volume has none either the case FAILs (it cannot be examined).
   P="$T/long project directory"; PA=$(abspath "$P"); mkdir -p "$P/.claude/state"; cp field-manifest.yaml "$P/"
   W=$(cygpath -w "$P")
   SHORT=$(python3 - "$W" <<'PYEOF'
@@ -143,16 +154,89 @@ PYEOF
   if [ "$SD" != "-" ] && [ "$(basename "$(cygpath -u "$SD")")" != ".claude" ]; then
     expect "E2 deny (8.3): Write $(basename "$(cygpath -u "$SD")")/state/field-ledger.jsonl" 2 "$(CLAUDE_PROJECT_DIR=$PA wr g1 "$(cygpath -m "$SD")/state/field-ledger.jsonl")"
   else
-    echo "SKIP  8.3 short name of .claude: volume has 8.3 name generation off"; echo "      reason: GetShortPathNameW returned no alias for $W\\.claude"
+    echo "FAIL  8.3 short name of .claude cannot be examined: the volume has 8.3 name generation off"; echo "      reason: GetShortPathNameW returned no alias for $W\\.claude"; fail=1
   fi
   if [ "$SM" != "-" ] && [ "$(basename "$(cygpath -u "$SM")")" != "field-manifest.yaml" ]; then
     expect "E2 deny (8.3): Write $(basename "$(cygpath -u "$SM")")" 2 "$(CLAUDE_PROJECT_DIR=$PA wr g1 "$(cygpath -m "$SM")")"
   else
-    echo "SKIP  8.3 short name of field-manifest.yaml: volume has 8.3 name generation off"; echo "      reason: GetShortPathNameW returned no alias for $W\\field-manifest.yaml"
+    echo "FAIL  8.3 short name of field-manifest.yaml cannot be examined: the volume has 8.3 name generation off"; echo "      reason: GetShortPathNameW returned no alias for $W\\field-manifest.yaml"; fail=1
   fi
+  W0=$(cygpath -w "$HERE")
+
+  # F2. NON-EXISTING targets: Python's realpath cleans a stream, a trailing dot or space only on a path that exists, so these
+  # fail when _win_clean is dropped. .claude/settings.json is a built-in E2 name ($-anchored) and does not exist here.
+  S=".claude/settings.json"
+  expect "E2 deny (non-existing, ADS): Write $S::\$DATA"                2 "$(wr i1 "$H/$S::\$DATA")"
+  expect "E2 deny (non-existing, ADS): Write .claude/settings.local.json:ads" 2 "$(wr i1 "$H/.claude/settings.local.json:ads")"
+  expect "E2 deny (non-existing, trailing dot): Write $S."              2 "$(wr i1 "$H/$S.")"
+  expect "E2 deny (non-existing, trailing space): Write '$S '"          2 "$(wr i1 "$H/$S ")"
+  expect "E2 deny (non-existing, //?/ prefix): Write //?/$H/$S"         2 "$(wr i1 "//?/$H/$S")"
+  expect "E2 deny (non-existing, \\\\?\\ prefix): Write \\\\?\\$W0\\.claude\\settings.json" 2 "$(wr i1 "\\\\?\\$W0\\.claude\\settings.json")"
+  expect "E2 deny (non-existing, .claude. directory): Write .claude./settings.json" 2 "$(wr i1 "$H/.claude./settings.json")"
+  expect "E2 allow: control, '.claude/.../settings.json' (three dots is a real, different name)" 0 "$(wr i2 "$H/.claude/.../settings.json")"
+  expect "E2 allow: control, shell token http://host:80/a is not mangled" 0 "$(call i2 Bash "$(bj "echo http://host:80/a")")"
+  expect "E2 allow: control, shell token PATH=/a:/b is not mangled"      0 "$(call i2 Bash "$(bj "echo PATH=/a:/b")")"
+
+  # G. spellings of the same place that the gate cannot map to a drive-letter path: it must refuse them (E0), not allow.
+  # The volume GUID and the GLOBALROOT device path are read from the OS for the checkout's own volume, and each is first shown to
+  # be live (it opens the manifest); if the OS cannot give them, that is a FAIL, not a skip.
+  R0=${W0#?:}                                           # \Users\...\test  (no drive)
+  DRV=${W0%%:*}
+  ALIAS=$(python3 - "$W0" <<'PYEOF'
+import ctypes, os, sys
+w = sys.argv[1]
+drive = w[:2]
+buf = ctypes.create_unicode_buffer(1024)
+guid = buf.value if ctypes.windll.kernel32.GetVolumeNameForVolumeMountPointW(drive + "\\", buf, 1024) else ""
+dev = ctypes.create_unicode_buffer(1024)
+dev = dev.value if ctypes.windll.kernel32.QueryDosDeviceW(drive, dev, 1024) else ""
+rest = w[2:]
+ok = lambda p: os.path.exists(p + "\\field-manifest.yaml")
+g = guid.rstrip("\\") + rest if guid else ""
+d1 = "\\\\?\\GLOBALROOT" + dev + rest if dev else ""
+d2 = "\\\\.\\GLOBALROOT" + dev + rest if dev else ""
+for name, p in (("guid", g), ("globalroot", d1), ("globalroot_dot", d2)):
+    print(name + "=" + (p if p and ok(p) else "-"))
+PYEOF
+)
+  for nm in guid globalroot globalroot_dot; do
+    v=$(echo "$ALIAS" | tr -d '\r' | sed -n "s/^$nm=//p")
+    if [ -z "$v" ] || [ "$v" = "-" ]; then echo "FAIL  $nm alias of the checkout cannot be examined: the OS did not give a path that opens field-manifest.yaml"; fail=1; continue; fi
+    expect "E0 deny ($nm): Write $v\\.claude\\state\\x" 2 "$(wr j1 "$v\\.claude\\state\\x")"
+    F=$(echo "$v" | tr '\\' '/')   # Bash reads backslashes as escapes: its form is //?/Volume{..}/...
+    expect "E0 deny ($nm): Write $v\\field-manifest.yaml" 2 "$(wr j1 "$v\\field-manifest.yaml")"
+    expect "E0 deny ($nm): Bash echo x > $F/.claude/state/x" 2 "$(call j1 Bash "$(bj "echo x > $F/.claude/state/x")")"
+    expect "E0 deny ($nm): E5 exec of x.sh through the alias (after writing it by its real path)" 2 "$(wr j2 "$H/ax.sh" >/dev/null; call j2 Bash "$(bj "bash $F/ax.sh")")"
+  done
+  U1="\\\\localhost\\$DRV\$$R0"; U2="\\\\127.0.0.1\\$DRV\$$R0"; U3="\\\\?\\UNC\\localhost\\$DRV\$$R0"; U4="//localhost/$DRV\$$(echo "$R0" | tr '\\' '/')"
+  for u in "$U1" "$U2" "$U3" "$U4"; do
+    expect "E0 deny (UNC admin share): Write $u\\.claude\\state\\x" 2 "$(wr k1 "$u\\.claude\\state\\x")"
+    expect "E0 deny (UNC admin share): Write $u/field-manifest.yaml" 2 "$(wr k1 "$u/field-manifest.yaml")"
+  done
+  expect "E0 deny (UNC, Bash): echo x > //localhost/C\\\$/.../.claude/state/x" 2 "$(call k2 Bash "$(bj "echo x > $U4/.claude/state/x")")"
+  expect "E0 deny (UNC, PowerShell): Set-Content \\\\localhost\\C\$\\...\\.claude\\state\\x" 2 "$(call k2 PowerShell "$(bj "Set-Content -Path $U1\\.claude\\state\\x -Value x")")"
+  expect "E0 deny (UNC, E5): bash <UNC>/ax.sh after writing ax.sh by its real path" 2 "$(wr k3 "$H/ax.sh" >/dev/null; call k3 Bash "$(bj "bash $U4/ax.sh")")"
+  expect "E0 deny (drive-relative): Write C:.claude\\state\\x"           2 "$(wr l1 "$DRV:.claude\\state\\x")"
+  expect "E0 deny (drive-relative): Write C:.claude/state/x"             2 "$(wr l1 "$DRV:.claude/state/x")"
+  expect "E0 deny (drive-relative, PowerShell): Set-Content C:.claude\\state\\x" 2 "$(call l1 PowerShell "$(bj "Set-Content -Path $DRV:.claude\\state\\x -Value x")")"
+
+  # J. a symlink or junction loop: Python's lenient realpath returns the path unresolved for it (a gate that relied on it would
+  # allow); the gate resolves strictly and must deny. Junction loop: A -> S, B -> A, drop A, A -> B.
+  mkdir -p "$T/loopS"
+  cmd /c "mklink /J $(cygpath -w "$T/loopA") $(cygpath -w "$T/loopS")" >/dev/null && cmd /c "mklink /J $(cygpath -w "$T/loopB") $(cygpath -w "$T/loopA")" >/dev/null \
+    && cmd /c "rmdir $(cygpath -w "$T/loopA")" >/dev/null && cmd /c "mklink /J $(cygpath -w "$T/loopA") $(cygpath -w "$T/loopB")" >/dev/null \
+    && LINKS+=("$T/loopA" "$T/loopB") && echo "PASS  junction loop built (loopA -> loopB -> loopA)" || { echo "FAIL  could not build a junction loop"; fail=1; }
+  expect "E0 deny (junction loop): Write <outside>/loopA/x"              2 "$(wr m1 "$TA/loopA/x")"
+  cmd /c "mklink /D $(cygpath -w "$T/symA") $(cygpath -w "$T/symB")" >/dev/null 2>&1 && cmd /c "mklink /D $(cygpath -w "$T/symB") $(cygpath -w "$T/symA")" >/dev/null 2>&1 \
+    && LINKS+=("$T/symA" "$T/symB") && echo "PASS  symlink loop built (symA -> symB -> symA)" || { echo "FAIL  could not build a symlink loop (symlinks need Developer Mode or elevation)"; fail=1; }
+  expect "E0 deny (symlink loop): Write <outside>/symA/x"                2 "$(wr m1 "$TA/symA/x")"
+
 else
   echo "N/A  Windows path aliases (::\$DATA streams, \\\\?\\ prefix, trailing dot/space, 8.3 names): they are ordinary names on POSIX"
 fi
+
+# I. unit tests of the path canonicalisation (_win_clean table, fail-closed forms, POSIX byte-identity)
+python3 "$(abspath "$HERE")/test_path_canon.py" || fail=1
 
 # H. cleanup must not have followed a link into its target (tests the rmlink helper too)
 for l in "${LINKS[@]+"${LINKS[@]}"}"; do rmlink "$l"; done; LINKS=()

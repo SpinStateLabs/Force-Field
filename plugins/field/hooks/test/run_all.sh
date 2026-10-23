@@ -22,14 +22,14 @@ echo "platform: $plat   bash: ${BASH_VERSION}   python3: $(python3 --version 2>&
 printf '%-22s %5s %6s %6s %6s\n' suite exit PASS FAIL SKIP
 for s in $SUITES; do
   bash "./$s" > "$OUT/$s.txt" 2>&1; rc=$?
-  p=$(grep -c '^PASS' "$OUT/$s.txt"); f=$(grep -c 'FAIL' "$OUT/$s.txt"); k=$(grep -c '^SKIP' "$OUT/$s.txt")
+  p=$(grep -c '^PASS' "$OUT/$s.txt"); f=$(grep -c '^FAIL' "$OUT/$s.txt"); k=$(grep -c '^SKIP' "$OUT/$s.txt")   # FAIL is counted only at a line start: that is how the suites report a failed case
   printf '%-22s %5s %6s %6s %6s\n' "$s" "$rc" "$p" "$f" "$k"
   why=""
   [ "$rc" != 0 ] && why="$why exit $rc;"
   [ "$f" != 0 ] && why="$why $f FAIL line(s);"
   if [ "$s" = run.sh ]; then grep -q 'LEDGER INTACT' "$OUT/$s.txt" || why="$why no 'LEDGER INTACT';"
   else [ "$p" = 0 ] && why="$why no PASS line;"; fi
-  if [ -n "$why" ]; then fail=1; echo "  SUITE FAILED ($s):$why last lines:"; tail -n 15 "$OUT/$s.txt" | sed 's/^/    | /'; fi
+  if [ -n "$why" ]; then fail=1; echo "  SUITE FAILED ($s):$why last lines:"; { grep -A1 "^FAIL" "$OUT/$s.txt"; tail -n 15 "$OUT/$s.txt"; } | sed "s/^/    | /"; fi
   # a SKIP with its reason line (a following line that starts with whitespace and "reason:")
   awk -v s="$s" '{ if ($0 ~ /^SKIP/) print s ": " $0; else if ($0 ~ /^[ 	]+reason:/ && prev ~ /^SKIP/) print "      " $0; prev = $0 }' "$OUT/$s.txt" >> "$OUT/skips.full"
   grep '^SKIP' "$OUT/$s.txt" | sed "s/^/$s: /" >> "$OUT/skips"

@@ -168,6 +168,16 @@ caught, and paths resolve against the project root rather than the shell's worki
 fails open. `/field audit` produces an audit-ready report; independent certification is a separate
 service.
 
+### Known-bypass register (E2 and E5 are text-scanning controls, not a sandbox)
+
+Windows path handling (ADR-0080) resolves symlinks, junctions and 8.3 short names, strips `\\?\` prefixes, NTFS streams and trailing dots, and refuses (E0) any path it cannot map to a drive letter: UNC and admin-share (`\\localhost\C$\...`, `//localhost/C$/...`), `\\?\Volume{GUID}\`, `\\?\GLOBALROOT\Device\...`, `\\.\` device paths and drive-relative `C:x`. Local admin-share access is denied by design; a project that itself lives on a UNC share keeps working because paths under the identically cleaned root are allowed. Not covered, and not fixable by this mechanism:
+
+- **Hard links** to a protected or session-written file: `realpath` cannot see them (identical on POSIX). A hard link made by the agent through Bash is a file created by Bash itself.
+- **Shell expansion**: `$PWD`, `$(pwd)`, `${CLAUDE_PROJECT_DIR}`, `%CD%`, `$env:...`, and Git Bash `/proc/self/cwd/...` spell the path in a form the gate does not evaluate.
+- **A program that opens the path itself**: `python -c "open(...)"`, `node -e`, an editor macro.
+- **Unknown**: network drives mapped with `net use` (untested); whether Claude Code ever passes a `\\?\Volume{}`, GLOBALROOT, UNC or drive-relative path to the OS at all (the gate refuses them either way); Python versions other than 3.12 and 3.14.
+- A symlink or junction **loop**, or any resolution error other than "does not exist", denies E0 on Windows. On POSIX a loop is not detected (unchanged: `realpath` returns the path as is).
+
 ## Related
 
 - Landing page: [spinstatelabs.ca/field](https://spinstatelabs.ca/field)
