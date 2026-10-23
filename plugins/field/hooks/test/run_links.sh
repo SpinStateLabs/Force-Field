@@ -146,7 +146,7 @@ for K in $KINDS; do
     # bare words that name a link are resolved on both platforms (ADR-0080)
       expect "E2 deny (dangling symlink): Bash echo x >> dl_state (bare name)"                 2 "$(call n1 Bash "$(bj "echo x >> dl_state")")"
       expect "E2 deny (dangling symlink): Bash tee -a dl_state (bare name)"                    2 "$(call n1 Bash "$(bj "echo x | tee -a dl_state")")"
-        expect "E2 deny (dangling symlink): PowerShell Set-Content -Path dl_state"               2 "$(call n1 PowerShell "$(bj "Set-Content -Path dl_state -Value x")")"
+      expect "E2 deny (dangling symlink): PowerShell Set-Content -Path dl_state"               2 "$(call n1 PowerShell "$(bj "Set-Content -Path dl_state -Value x")")"
     else
       echo "FAIL  dangling file symlinks cannot be made: $(echo "$LINK_ERR" | head -n 1)"; fail=1
     fi
