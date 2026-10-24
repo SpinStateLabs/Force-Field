@@ -598,6 +598,8 @@ EXEC_VALUE_FLAGS = {"-c", "--pre", "--hostname-bin", "--config-env", "--exec-pat
 def _value_forms(value):
     """The value, and the pieces of it a path can hide in (KEY=!path, a:b lists)."""
     value = value.lstrip("!")
+    if re.match(r"(?i)^(?!file:)[a-z][a-z0-9+.-]*://", value):  # a URL is no path list: https://h/p must not split into //h/p (UNC)
+        return [value]
     return [value] + [p for p in re.split(r"[=!:;,|\s]+", value) if p]
 
 
@@ -995,8 +997,10 @@ def bash_e2_words(cmd, root, hits, depth=0):
 
 def ps_as_bash(cmd):
     """PowerShell text for the Bash analysis: backslashes as separators, { } script blocks as command separators
-    (`if ($x) { cmd /c "..." }` has cmd at command position, like `& { ... }`; ( ) already split commands)."""
-    return re.sub(r"[{}]", " ; ", _norm(cmd))
+    (`if ($x) { cmd /c "..." }` has cmd at command position, like `& { ... }`), ( ) $( ) @( ) groups too, at any depth."""
+    keep = "\ue001"  # a backslash-quote is an escaped quote in a native command's argument, not a path separator
+    text = _norm(cmd.replace(chr(92) + chr(34), keep)).replace(keep, chr(92) + chr(34))
+    return re.sub(r"[(){}]", " ; ", text)
 
 
 def e2_targets(tool, ti, root, hits):
@@ -1171,11 +1175,18 @@ def dir_wipe_target(cmd, root, guard=(), depth=0):
     return None
 
 
+# PowerShell code that is a string until it runs: iex / Invoke-Expression, [scriptblock]::Create, & ("..."), & $x
+PS_EVAL = re.compile(r"(?i)(?<![\w-])(?:iex|invoke-expression)(?![\w-])|\[scriptblock\]::create"
+                     r"|(?:^|[;|&({\s])&\s*[(\"'$]")
+
+
 def unreadable_input(cmd):
     """Reason when the command hands a shell its commands in a form the gate cannot read: cmd reading a file
     (`cmd < script.bat`) or an encoded PowerShell command (-EncodedCommand / -enc). Denied outright (fail closed)."""
     if re.search(r"(?i)\b(?:powershell|pwsh)(?:[.]exe)?\b[^|;&]*\s-(?:e|ec|enc|encodedcommand)\b", cmd):
         return "an encoded PowerShell command the gate cannot read"
+    if PS_EVAL.search(cmd) and _risky(cmd):  # a string run as code (also built by concatenation): unreadable
+        return "a PowerShell string evaluated as code (iex, [scriptblock]::Create, & (...)) in a line that names a removal or a protected path"
     try:
         stages = [st for pipe in _split(_shell_words(cmd)) for st in pipe]
     except ValueError:
@@ -1392,7 +1403,8 @@ def enforce(inp, manifest, root, ledger_path, store_source):
                 else:  # PowerShell: no parser, so every token counts (over-blocks reads; safe side)
                     toks = ps_tokens(shell_command(tool, ti))
                     # $PWD/x.sh, -FilePath:x.sh: also try the text after the last ':' or '$var/'.
-                    toks += [re.sub(r"^.*(?::|\$[^/]*/)", "", _norm(t)) for t in toks]
+                    toks += [re.sub(r"^.*(?::|\$[^/]*/)", "", _norm(t)) for t in toks
+                             if not re.match(r"(?i)^(?!file:)[a-z][a-z0-9+.-]*://", t)]  # not a URL: //host/x would read as UNC
             except ValueError:
                 deny(ledger_path, event, "E0", "command could not be tokenised for E5; fail-closed")
             for tok in dict.fromkeys(toks):  # de-duplicated: path_key resolves the file system

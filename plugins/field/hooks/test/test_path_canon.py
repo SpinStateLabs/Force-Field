@@ -429,6 +429,23 @@ p3, g3 = g.bash_e2_words("cmd /c del field-manifest.*", wroot, lambda w: False, 
 check("bash_e2_words beyond the cap: the rest still gives its glob and words", True, "field-manifest.*" in g3 and "field-manifest.*" in p3)
 p4, g4 = g.bash_e2_words("cmd /c echo hi", wroot, lambda w: False, 3)
 check("bash_e2_words beyond the cap: a harmless rest gives no glob", [], g4)
+# every alternative of the fail-closed word list must matter beyond the nesting cap
+for word in ("rm x", "rmdir x", "rd x", "del x", "erase x", "unlink x", "shred x", "mv a b", "move a b", "ren a b", "rename a b",
+             "Remove-Item x", "ri x", "robocopy a b", "format c:", "find . -delete", "cat field-manifest.yaml", "cat hooks.json",
+             "cat .claude/x", "cat settings.json", "cat settings.local.json", "cat ESTATE_KILL", "cat field-ledger.jsonl"):
+    check("beyond the cap, %r is risky" % word, True, g._risky(word))
+    check("beyond the cap, bash -c %r is denied" % word, True, g.dir_wipe_target("bash -c '%s'" % word, wroot, (), 3) is not None)
+check("beyond the cap, harmless words are not risky", False, g._risky("echo hi; ls -la; git status; cat README.md; formatted"))
+check("_value_forms: a URL is one piece", ["https://h/p?a=1&b=2"], g._value_forms("https://h/p?a=1&b=2"))
+check("_value_forms: a:b lists still split", True, "/usr/x" in g._value_forms("PATH=a:/usr/x") or "/usr/x" in g._value_forms("a:/usr/x"))
+check("ps_as_bash: (( )) @( ) $( ) and { } are command position", True,
+      all(" ; cmd" in g.ps_as_bash(s) for s in ('((cmd /c x))', '@(cmd /c x)', '$(cmd /c x)', '{cmd /c x}', '@(@(cmd /c x))')))
+check("ps_as_bash: an escaped quote survives", True, chr(92) + chr(34) in g.ps_as_bash('pwsh -c "a ' + chr(92) + chr(34) + 'b' + chr(92) + chr(34) + '"'))
+check("unreadable_input: iex of a string naming a removal", True, g.unreadable_input("iex 'rd /s /q x'") is not None)
+check("unreadable_input: [scriptblock]::Create of a removal", True, g.unreadable_input("$sb = [scriptblock]::Create('rd /s /q x'); $sb.Invoke()") is not None)
+check("unreadable_input: iex of a harmless string", None, g.unreadable_input("iex 'Get-Date'"))
+check("unreadable_input: & (string) naming a protected file", True, g.unreadable_input("& ('cat ' + 'field-manifest.yaml')") is not None)
+check("unreadable_input: & { block } is analysable", None, g.unreadable_input("& { Get-Date }"))
 check("unreadable_input: cmd < script.bat", True, g.unreadable_input("cmd < script.bat") is not None)
 check("unreadable_input: cmd < /dev/null is fine", None, g.unreadable_input("cmd < /dev/null"))
 check("unreadable_input: powershell -enc", True, g.unreadable_input("powershell -NoProfile -enc AAAA") is not None)
