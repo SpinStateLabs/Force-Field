@@ -101,7 +101,8 @@ D @@ Bash @@ sh -c "rm -r ."
 D @@ Bash @@ bash -lc "rmdir .claude"
 D @@ Bash @@ bash -c 'cmd /c "rd /s /q .claude"'
 D @@ Bash @@ cmd /c cmd /c cmd /c rd /s /q .claude
-A @@ Bash @@ cmd /c cmd /c cmd /c cmd /c rd /s /q .claude
+D @@ Bash @@ cmd /c cmd /c cmd /c cmd /c rd /s /q .claude
+A @@ Bash @@ cmd /c cmd /c cmd /c cmd /c echo hi
 A @@ Bash @@ bash -c 'rm -r node_modules'
 A @@ Bash @@ sh -c "rm -r build"
 A @@ Bash @@ cmd /c "rd /s /q other"
@@ -126,3 +127,39 @@ D @@ PowerShell @@ cmd /c "if exist .claude rd /s /q .claude"
 D @@ PowerShell @@ bash -c 'rm -r .claude'
 D @@ PowerShell @@ rmdir .\.claude
 D @@ PowerShell @@ rm -r .\.claude
+D @@ Bash @@ echo "echo x > field-manifest.yaml" | cmd /k
+D @@ Bash @@ echo "echo x > field-manifest.yaml" | cmd /c
+D @@ Bash @@ echo "echo x > field-manifest.yaml" | cmd /k echo
+D @@ Bash @@ echo "echo x > field-manifest.yaml" | cmd /q /k
+D @@ Bash @@ echo "rd /s /q .claude" | cmd /k
+D @@ Bash @@ cmd /k <<< "rd /s /q .claude"
+D @@ Bash @@ echo "del field-manifest.*" | cmd /k
+D @@ PowerShell @@ echo "rd /s /q .claude" | cmd /k
+D @@ PowerShell @@ "del field-manifest.*" | cmd /k
+D @@ Bash @@ echo rd /s /q .claude | cmd
+D @@ Bash @@ echo del field-manifest.* | cmd
+D @@ Bash @@ printf 'rd /s /q .claude\n' | cmd
+D @@ Bash @@ cmd /c "echo a&(rd /s /q .claude)"
+D @@ Bash @@ cmd /c "(echo a)&(del field-manifest.*)"
+D @@ Bash @@ cmd /c "echo a&&(rd /s /q .claude)"
+D @@ PowerShell @@ if ($true) { cmd /c "del field-manifest.*" }
+D @@ PowerShell @@ 1..2 | % { cmd /c "rd /s /q .claude" }
+D @@ PowerShell @@ try { cmd /c "rd /s /q .claude" } catch {}
+D @@ PowerShell @@ foreach ($i in 1..2) { cmd /c "del field-manifest.*" }
+D @@ PowerShell @@ {cmd /c "rd /s /q .claude"}
+D @@ Bash @@ cmd /c cmd /c cmd /c cmd /c cmd /c del field-manifest.*
+D @@ Bash @@ bash -c "bash -c \"bash -c \\\"bash -c 'rm -r .'\\\"\""
+D @@ Bash @@ cmd < script.bat
+D @@ PowerShell @@ powershell -EncodedCommand AAAA
+D @@ Bash @@ pwsh -enc AAAA
+D @@ Bash @@ pwsh -Command "rmdir .claude"
+D @@ Bash @@ powershell -Command "rm -r ."
+D @@ Bash @@ echo "unbalanced; rm -r .claude
+A @@ Bash @@ mv other/a.txt .
+A @@ Bash @@ bash -c "mv x ."
+A @@ Bash @@ cmd /c "move x ."
+A @@ Bash @@ npm test -- --grep "a:b"
+A @@ Bash @@ cmd /c cmd /c cmd /c cmd /c echo hi
+A @@ Bash @@ cmd < /dev/null
+A @@ PowerShell @@ if ($true) { cmd /c "echo hi" }
+A @@ PowerShell @@ 1..2 | % { echo hi }

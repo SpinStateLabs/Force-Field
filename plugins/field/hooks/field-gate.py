@@ -389,10 +389,11 @@ def _root_norm(root):
     return _ROOT_CACHE[key]
 
 
-def _drive_relative(s, before_clean):
-    """True for a drive-relative word (C:x). The exception (PR 15): a word with a second colon (`a:b:c`, `x:y:z`; looked at
-    before _win_clean cuts the stream suffix) whose first letter is no mounted drive names nothing the OS can open, so it is no E0. C:x is refused whatever the drive."""
-    return bool(re.match(r"^[A-Za-z]:(?!/|$)", s)) and (":" not in before_clean[2:] or os.path.exists(s[0] + ":/"))
+def _drive_relative(s, before_clean=None):
+    """True for a drive-relative word (C:x). On Windows only when that drive exists: `a:b`, `x:y:z`, "a:b" in
+    `npm test --grep "a:b"` name nothing the OS can open, so they are no E0 (PR 15). Elsewhere (a simulated
+    Windows root) every such word is refused."""
+    return bool(re.match(r"^[A-Za-z]:(?!/|$)", s)) and (sys.platform != "win32" or os.path.exists(s[0] + ":/"))
 
 
 def _abs_norm(raw, root):
@@ -842,6 +843,7 @@ def _cmd_line(line):
     is field-manifest.yaml), backslashes as separators, and cmd's file commands renamed to their Bash twins at command
     position (del x -> rm x, so `del field-manifest.*` is judged like `rm field-manifest.*`)."""
     line = _norm(line.replace("^", "").replace('"', " ")).strip()  # a quote only splits words for cmd: del"x" is del x
+    line = re.sub(r"[()&|]+", " & ", line)  # ( ) & | split commands whether or not spaces surround them
     # call x, start [/b] x, do x, else x, `if <condition> x` and a leading @ leave x at command position: read them as
     # command separators. rd/s/q (no spaces) is rd /s /q.
     line = re.sub(r"(?i)(?<![\w./-])(?:call|start(?:\s+/\w+(?::\S+)?)*|do|else)\s+"
@@ -861,26 +863,38 @@ def cmd_payload(words):
     return None
 
 
+BACKSLASH = chr(92)
+
+
+def _lines_of(word):
+    """A quoted word as lines: real newlines and a literal backslash-n (printf 'rd x\n') both end a line."""
+    return word.replace(BACKSLASH + "n", "\n").replace(BACKSLASH + "r", "\n").split("\n")
+
+
 def cmd_stdin_lines(cmd):
-    """When the command line runs a cmd with no /c (`echo "rd /s /q .claude" | cmd`, `cmd <<< "..."`, `cmd <<EOF`,
-    `cmd < file`), cmd reads command lines from stdin: every other piece of the text (a quoted word, a stage, a
-    here-document line) is a candidate cmd line. Returns those lines, read as cmd lines (_cmd_line); [] when no
-    cmd reads stdin. An over-approximation that only matters when such a line touches a protected path."""
+    """When the command line runs a cmd at all (`echo "rd /s /q .claude" | cmd /k`, `cmd <<< "..."`, `cmd <<EOF`),
+    cmd may read command lines from stdin whatever its switches (/k keeps reading): every piece of the text is a
+    candidate cmd line: each quoted or spaced word (split at newlines), each stage, and each stage without its first
+    word (`echo rd x | cmd`: the producer is not part of the line). Returns those lines read as cmd lines (_cmd_line);
+    [] when no cmd runs. An over-approximation that only matters when such a line touches a protected path."""
     try:
         stages = [st for pipe in _split(_shell_words(cmd)) for st in pipe]
     except ValueError:
         return []
-    cmds = []
+    runs_cmd = False
     for st in stages:
         i = _command_index([w for w, _q in st])
-        if i is not None and _base(st[i][0]) == "cmd" and cmd_payload([w for w, _q in st[i + 1:]]) is None:
-            cmds.append(st)
-    if not cmds:
+        if i is not None and _base(st[i][0]) == "cmd":
+            runs_cmd = True
+    if not runs_cmd:
         return []
     lines = []
     for st in stages:
-        words = [w for w, _q in st if not REDIRECT.match(w) and w not in ("<<<", "<<", "<")]
-        lines += [w for w, q in st if q or " " in w] + [" ".join(words)]
+        words = [w for w, _q in st]
+        for w, q in st:
+            if q or " " in w:
+                lines += _lines_of(w)
+        lines += [" ".join(words), " ".join(words[1:])]
     return [_cmd_line(ln) for ln in dict.fromkeys(lines) if ln.strip()]
 
 
@@ -959,8 +973,12 @@ def bash_e2_words(cmd, root, hits, depth=0):
                 marked.update(m)
                 if sink and not _interpreter_sink(stage):
                     nested += [w for w, q in stage if q]
-                for n in nested if depth < 3 else []:
-                    p, g = bash_e2_words(n, root, hits, depth + 1)
+                for n in nested:
+                    if depth < 3:
+                        p, g = bash_e2_words(n, root, hits, depth + 1)
+                    else:  # beyond the cap: every word of the rest counts, a protected word or glob anywhere denies
+                        p = ps_tokens(n)
+                        g = [x for x in p if GLOB_CHARS.search(x)]
                     plain += p
                     globs += g
                 if xargs_mut:
@@ -973,6 +991,12 @@ def bash_e2_words(cmd, root, hits, depth=0):
                 if GLOB_CHARS.search(w) and (not q or quoted_glob_ok):
                     globs.append(w)
     return plain, globs
+
+
+def ps_as_bash(cmd):
+    """PowerShell text for the Bash analysis: backslashes as separators, { } script blocks as command separators
+    (`if ($x) { cmd /c "..." }` has cmd at command position, like `& { ... }`; ( ) already split commands)."""
+    return re.sub(r"[{}]", " ; ", _norm(cmd))
 
 
 def e2_targets(tool, ti, root, hits):
@@ -998,7 +1022,7 @@ def e2_targets(tool, ti, root, hits):
         if ">" in cmd or any(t.casefold() in PS_MUTATING for t in toks):
             globs = [t for t in ps_tokens(cmd) if GLOB_CHARS.search(t) and not re.search(r"\s", t)]
         if re.search(r"(?i)\bcmd(?:\.exe)?\b", cmd):  # a cmd line inside the text: its words and globs, read as Bash (PR 15)
-            p, g = bash_e2_words(_norm(cmd), root, hits)
+            p, g = bash_e2_words(ps_as_bash(cmd), root, hits)
             toks += p
             globs += g
     else:  # MCP and other tools
@@ -1071,6 +1095,18 @@ def _find_wipes(seg, i):
     return deletes and not any(w in ("-name", "-iname", "-path", "-ipath", "-regex", "-iregex") for w in rest)
 
 
+# Label for text the wipe check cannot read to the end (nested deeper than three levels) that names a
+# removal verb or a protected path: denied, not allowed (fail closed).
+BEYOND = "a command line nested more than three levels deep that names a removal or a protected path (not analysed, so denied)"
+RISKY = re.compile(r"(?i)(?<![A-Za-z0-9_-])(?:rm|rmdir|rd|del|erase|unlink|shred|mv|move|ren|rename|remove-item|ri|robocopy|format)(?![A-Za-z0-9_-])"
+                   r"|-delete|field-manifest|hooks[.]json|[.]claude|settings(?:[.]local)?[.]json|ESTATE_KILL|field-ledger")
+
+
+def _risky(text):
+    """True when text holds a removal verb or a built-in protected name: the text a fail-closed check must not wave through."""
+    return bool(RISKY.search(_norm(text)))
+
+
 def dir_wipe_target(cmd, root, guard=(), depth=0):
     """Label of an argument of a Bash rm/rmdir/mv/shred/unlink (or an unfiltered find -delete) that
     is the project directory, one of its parents or the .claude/ directory (where the state and
@@ -1080,7 +1116,7 @@ def dir_wipe_target(cmd, root, guard=(), depth=0):
     rootn, _win = _root_norm(root)
     try:
         segs = _segments(cmd)
-    except ValueError:
+    except ValueError:  # unbalanced quotes: the E5 tokenisation already denies the call (E0, fail closed)
         return None
     if depth == 0:  # cmd reading its lines from a pipe, here-string or here-document
         for ln in cmd_stdin_lines(cmd):
@@ -1092,23 +1128,37 @@ def dir_wipe_target(cmd, root, guard=(), depth=0):
         if i is None:
             continue
         b = _base(seg[i])
-        if b == "cmd" and depth < 3:  # cmd /c "rd /s /q .claude" wipes like rmdir/rm -r (PR 15)
+        if b == "cmd":  # cmd /c "rd /s /q .claude" wipes like rmdir/rm -r (PR 15)
             payload = cmd_payload(seg[i + 1:])
-            hit = dir_wipe_target(payload, root, guard, depth + 1) if payload is not None else None
-            if hit:
-                return hit
-        if SHELL_C.match(b) and depth < 3:  # bash -c 'rm -r .claude', sh -c, pwsh -Command: judge the payload like top level
+            if payload is not None and depth >= 3:
+                if _risky(payload):
+                    return BEYOND
+            elif payload is not None:
+                hit = dir_wipe_target(payload, root, guard, depth + 1)
+                if hit:
+                    return hit
+        if SHELL_C.match(b):  # bash -c 'rm -r .claude', sh -c, pwsh -Command: judge the payload like top level
             for n, w in enumerate(seg[i + 1:-1]):
                 if re.match(r"^-[a-zA-Z]*c$", w) or w == "-Command":
-                    hit = dir_wipe_target(seg[i + 2 + n], root, guard, depth + 1)
+                    payload = seg[i + 2 + n]
+                    if depth >= 3:
+                        if _risky(payload):
+                            return BEYOND
+                        continue
+                    hit = dir_wipe_target(payload, root, guard, depth + 1)
                     if hit:
                         return hit
         if b not in DESTRUCTIVE and not (b == "find" and _find_wipes(seg, i)):
             continue
+        args = [x for x in seg[i + 1:] if not x.startswith("-")]
+        if b == "mv" and len(args) >= 2:  # mv x . moves x: the last argument is the destination, not removed
+            args = args[:-1]
         for t in seg[i + 1:]:
             if t.startswith("-"):
                 if b == "find":
                     break  # find's options start here; the start directories came before
+                continue
+            if b == "mv" and t not in args:
                 continue
             a, _ = _abs_norm(t, root)
             if a == rootn + "/.claude":
@@ -1121,6 +1171,23 @@ def dir_wipe_target(cmd, root, guard=(), depth=0):
     return None
 
 
+def unreadable_input(cmd):
+    """Reason when the command hands a shell its commands in a form the gate cannot read: cmd reading a file
+    (`cmd < script.bat`) or an encoded PowerShell command (-EncodedCommand / -enc). Denied outright (fail closed)."""
+    if re.search(r"(?i)\b(?:powershell|pwsh)(?:[.]exe)?\b[^|;&]*\s-(?:e|ec|enc|encodedcommand)\b", cmd):
+        return "an encoded PowerShell command the gate cannot read"
+    try:
+        stages = [st for pipe in _split(_shell_words(cmd)) for st in pipe]
+    except ValueError:
+        return None
+    for st in stages:
+        words = [w for w, _q in st]
+        i = _command_index(words)
+        if i is not None and _base(words[i]) == "cmd" and "<" in words[i + 1:]                 and words[words.index("<", i + 1) + 1:][:1] not in (["/dev/null"], ["nul"], ["NUL"]):
+            return "cmd reading its commands from a file or process the gate cannot see"
+    return None
+
+
 def shell_pattern_hit(tool, cmd, globs, names, root, guard=()):
     """E2 reason when one of the selected glob/brace words expands to a governance path, or (Bash)
     when rm/rmdir/mv/shred/unlink is aimed at the project directory, a parent or .claude/; else None."""
@@ -1128,9 +1195,13 @@ def shell_pattern_hit(tool, cmd, globs, names, root, guard=()):
         hit = glob_hit(w, names, root)
         if hit:
             return f"shell glob/brace pattern expands to {hit}"
+    if tool in ("Bash", "PowerShell"):
+        why = unreadable_input(cmd)
+        if why:
+            return why
     hit = dir_wipe_target(cmd, root, guard) if tool == "Bash" else None
     if not hit and tool == "PowerShell":  # PowerShell text reads as a Bash line well enough: cmd /c "..." and rm/mv/rmdir -r
-        hit = dir_wipe_target(_norm(cmd), root, guard)
+        hit = dir_wipe_target(ps_as_bash(cmd), root, guard)
     return f"destructive command aimed at {hit}" if hit else None
 
 

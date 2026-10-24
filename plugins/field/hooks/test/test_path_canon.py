@@ -416,11 +416,31 @@ check("cmd_payload: /s/c glued to the text", "echo x", g.cmd_payload(["/s/cecho 
 check("cmd_payload: /v:on/c bundled", "echo x", g.cmd_payload(["/v:on/c", "echo x"]))
 wroot = tempfile.mkdtemp(prefix="canon_wipe_")
 os.makedirs(os.path.join(wroot, ".claude"))
-for depth, want in ((0, True), (2, True), (3, False)):
+for depth, want in ((0, True), (2, True), (3, True)):  # beyond the cap a removal or protected word is denied (fail closed)
     check("dir_wipe_target: bash -c payload followed at depth %d: %s" % (depth, want), want,
           g.dir_wipe_target("bash -c 'rm -r .claude'", wroot, (), depth) is not None)
     check("dir_wipe_target: cmd /c payload followed at depth %d: %s" % (depth, want), want,
           g.dir_wipe_target('cmd /c "rd /s /q .claude"', wroot, (), depth) is not None)
+check("dir_wipe_target: a harmless payload beyond the cap is allowed (bash)", None, g.dir_wipe_target("bash -c 'echo hi'", wroot, (), 3))
+check("dir_wipe_target: a harmless payload beyond the cap is allowed (cmd)", None, g.dir_wipe_target('cmd /c "echo hi"', wroot, (), 3))
+check("dir_wipe_target: mv x . moves x, it removes nothing", None, g.dir_wipe_target("mv other/a.txt .", wroot, (), 0))
+check("dir_wipe_target: mv .claude x does", True, g.dir_wipe_target("mv .claude x", wroot, (), 0) is not None)
+p3, g3 = g.bash_e2_words("cmd /c del field-manifest.*", wroot, lambda w: False, 3)
+check("bash_e2_words beyond the cap: the rest still gives its glob and words", True, "field-manifest.*" in g3 and "field-manifest.*" in p3)
+p4, g4 = g.bash_e2_words("cmd /c echo hi", wroot, lambda w: False, 3)
+check("bash_e2_words beyond the cap: a harmless rest gives no glob", [], g4)
+check("unreadable_input: cmd < script.bat", True, g.unreadable_input("cmd < script.bat") is not None)
+check("unreadable_input: cmd < /dev/null is fine", None, g.unreadable_input("cmd < /dev/null"))
+check("unreadable_input: powershell -enc", True, g.unreadable_input("powershell -NoProfile -enc AAAA") is not None)
+check("unreadable_input: powershell -Command is fine", None, g.unreadable_input("powershell -Command dir"))
+if os.name == "nt":
+    for w in ("q:b", '"q:b"'.strip('"'), "q:b:c"):
+        try:
+            g._abs_norm(w, "C:/proj")
+            got = "no error"
+        except g.UnresolvablePath:
+            got = "E0"
+        check("_abs_norm: %s (no such drive) is not E0" % w, "no error", got)
 check("dir_wipe_target: bash -c 'rm -r node_modules' is no wipe", None, g.dir_wipe_target("bash -c 'rm -r node_modules'", wroot, (), 0))
 shutil.rmtree(wroot, ignore_errors=True)
 
