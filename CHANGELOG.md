@@ -20,13 +20,30 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 - Workflow: `permissions: contents: read`, actions pinned to commit SHAs.
 - README: a known-bypass register (hard links, shell expansion, programs that open the path themselves, untested `net use` drives).
 
+### Fixed (gate, PR 15: the third-review gaps of PR 14; not yet released, no version bump)
+
+Deny-direction changes (each can turn a command that ran into an E2 deny; the first four close real bypasses):
+
+- **`cmd /c`, `cmd.exe /k` and `/r`** are shells like `bash -c`: everything after the switch is re-analysed as a command line (backslashes read as separators). `cmd /c 'echo {} > .claude\settings.local.json'`, `cmd /c 'echo x > .claude/state/secret.txt'` and `cmd /c 'type nul > field-manifest.yaml'` exited 0; they are E2 denies now. `cmd` is also an E2 wrapper and a pipeline interpreter sink.
+- **PowerShell colon-bound parameters** (`-Path:x`, `-LiteralPath:x`, `-Destination:x`) give the value as a token of its own, resolved like any path (the name must be letters only, so `http://h:80/a` is not split).
+- **The state-directory rule** matches after such a prefix (`-Path:.claude/state/x`), as defence in depth to the split.
+- **Bare Bash words that name a link** are resolved on POSIX whatever the name holds (a leading `-`, `?`, `*`, `"`, `<`, `>`, `|`), and a glob or character class without a slash that matches a link of the project root (`echo x >> led?`, `led*`, `l[e]d`) resolves each matching link (up to 50; `{a,b}` braces are not expanded). Windows keeps the old rule for dash and special-character names: an entry-name starting with `-` is still not resolved there, and glob matching uses the root's symlinks and junctions.
+
+Allow-direction change (removes a false deny):
+
+- **`echo a:b:c`, `Write-Output a:b:c`, `echo x:y:z`** are no longer E0 when no drive `a` / `x` exists. A drive-relative word on an existing drive (`C:foo`) is still E0. On a machine that has a drive `a:`, `echo a:b:c` is still denied.
+
+Still open (unchanged): a link created in the same command or a parallel call is invisible at check time; a glob with brace expansion; Windows dash-named links.
+
+New suite `hooks/test/run_shell_forms.sh` (in `run_all.sh` and the Ubuntu job), plus unit cases in `test_path_canon.py`; each fix was checked against its own mutant. No ADR file exists in this repository, so there is no ADR note.
+
 ### Known limitations (gate, ADR-0080; found in the third review, reproduced, not fixed in this PR)
 
-- **Bare-word link names with special characters (not resolved).** A link whose name begins with `-` or contains `?`, `*`, `"`, `<`, `>` or `|` is never resolved as a bare word: `echo x >> -lnk` (link `-lnk` to `.claude/state/f`) writes through it unseen. Name such a link with a slash (`./-lnk`) and it is caught.
-- **Globs that match a root link (not resolved).** `echo x >> led?` or `echo x >> led*` where `ledger` is a link into `.claude/state`: the shell expands the glob after the gate has looked at the text.
+- **Bare-word link names with special characters.** Fixed on POSIX in PR 15; still open on Windows (a name starting with `-`). A link whose name begins with `-` or contains `?`, `*`, `"`, `<`, `>` or `|` is never resolved as a bare word: `echo x >> -lnk` (link `-lnk` to `.claude/state/f`) writes through it unseen. Name such a link with a slash (`./-lnk`) and it is caught.
+- **Globs that match a root link.** Fixed in PR 15 (no brace expansion). `echo x >> led?` or `echo x >> led*` where `ledger` is a link into `.claude/state`: the shell expands the glob after the gate has looked at the text.
 - **A link created in the same command or in a parallel call is invisible at check time.** The gate resolves links as they exist when it runs. `ln -s .claude/state l && echo x > l/f`, or PowerShell `cmd /c mklink /D l .claude\state; echo x > l\f` / `New-Item -ItemType SymbolicLink`, creates the link and writes through it in one call, so the link protection (ADR-0080) does not apply to it. This defeats the link feature in a single call; treat link resolution as covering links that already exist.
-- **PowerShell colon-bound parameters.** `Set-Content -Path:.claude\state\x` binds the value to the flag with a colon; the state-directory pattern is anchored at the start of a token, so it does not match after the `-Path:` prefix.
-- **False deny: single-letter prefix with two or more colons.** `echo a:b:c` (also `Write-Output a:b:c`) reads as a drive-relative path `a:` and gives E0 UnresolvablePath although it is not a path. Quote-free workaround: put the text in a file or quote it so it is not a bare word.
+- **PowerShell colon-bound parameters.** Fixed in PR 15. `Set-Content -Path:.claude\state\x` binds the value to the flag with a colon; the state-directory pattern is anchored at the start of a token, so it does not match after the `-Path:` prefix.
+- **False deny (fixed in PR 15 unless that drive letter exists): single-letter prefix with two or more colons.** `echo a:b:c` (also `Write-Output a:b:c`) reads as a drive-relative path `a:` and gives E0 UnresolvablePath although it is not a path. Quote-free workaround: put the text in a file or quote it so it is not a bare word.
 
 ### Planned
 

@@ -351,4 +351,33 @@ if os.name == "nt":
 else:
     print("N/A  dangling-link spelling cases: Windows only")
 
+# ---- 7. PR 15: colon-bound PowerShell parameters, the state-dir rule after a parameter prefix, a:b:c ----
+check("ps_tokens: -Path:x yields the value as a token", True, "x/y" in g.ps_tokens("Set-Content -Path:x/y -Value v"))
+check("ps_tokens: -LiteralPath:'a b' yields the unquoted value", True, "a b" in g.ps_tokens("Set-Content -LiteralPath:'a b' -Value v"))
+check("ps_tokens: http://h:80/a is not split", False, any(tk == "//h:80/a" or tk == "80/a" for tk in g.ps_tokens("curl http://h:80/a")))
+sd = tempfile.mkdtemp(prefix="canon_sd_")
+rules = g.state_dir_rules(".claude/state/KILL", sd)
+for word in (".claude/state/x", "-Path:.claude/state/x", "-LiteralPath:.claude/state/x"):
+    check("state_dir_rules match %s" % word, True, any(re.search(rx, word) for rx, _l in rules))
+check("state_dir_rules do not match -Path:other/x", False, any(re.search(rx, "-Path:other/x") for rx, _l in rules))
+shutil.rmtree(sd, ignore_errors=True)
+if os.name == "nt":
+    free = [c for c in "qrstuvwxyz" if not os.path.exists(c + ":/")]
+    if free:
+        w = free[0] + ":b:c"
+        try:
+            g._abs_norm(w, "C:/proj")
+            got = "no error"
+        except g.UnresolvablePath:
+            got = "E0"
+        check("_abs_norm: %s (no such drive) is not E0" % w, "no error", got)
+    try:
+        g._abs_norm("C:foo", "C:/proj")
+        got = "no error"
+    except g.UnresolvablePath:
+        got = "E0"
+    check("_abs_norm: C:foo (drive-relative on an existing drive) is still E0", "E0", got)
+else:
+    print("N/A  a:b:c drive-relative cases: Windows only")
+
 sys.exit(1 if fail else 0)

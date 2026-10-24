@@ -389,6 +389,12 @@ def _root_norm(root):
     return _ROOT_CACHE[key]
 
 
+def _drive_relative(s, before_clean):
+    """True for a drive-relative word (C:x). The exception (PR 15): a word with a second colon (`a:b:c`, `x:y:z`; looked at
+    before _win_clean cuts the stream suffix) whose first letter is no mounted drive names nothing the OS can open, so it is no E0. C:x is refused whatever the drive."""
+    return bool(re.match(r"^[A-Za-z]:(?!/|$)", s)) and (":" not in before_clean[2:] or os.path.exists(s[0] + ":/"))
+
+
 def _abs_norm(raw, root):
     """(normalised absolute POSIX-style path, normalised root). ~ expanded, backslashes to '/',
     relative paths joined to the root. On Windows: Git Bash /c/ mapped to C:/, extended-length
@@ -401,9 +407,9 @@ def _abs_norm(raw, root):
     s = _norm(os.path.expanduser(str(raw or ""))).strip()
     if win:
         if os.name == "nt":
-            s = _win_clean(s)
+            before_clean, s = s, _win_clean(s)
             if (_WIN_NONLOCAL.match(s) and not (s.casefold() + "/").startswith(rootn + "/")) \
-                    or re.match(r"^[A-Za-z]:(?!/|$)", s):
+                    or _drive_relative(s, before_clean):
                 raise UnresolvablePath("path is not on a drive letter the gate can match (UNC, volume, device or drive-relative form)")
         else:
             s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
@@ -447,7 +453,7 @@ def _root_links(root):
                     if n > _LIST_MAX:
                         links = None
                         break
-                    if entry.is_symlink():
+                    if entry.is_symlink() or getattr(entry, "is_junction", lambda: False)():
                         links.add(entry.name)
         except OSError:
             links = None
@@ -461,15 +467,16 @@ def _bare_name_resolves(s, root):
     Windows: any entry of the root (links and 8.3 aliases cannot be told apart cheaply). POSIX (since ADR-0080,
     PR 14): only a symlink, dangling or not, so a plain bare word is never resolved and a command that names no
     link is judged exactly as before. Both use one cached root listing."""
-    if s.startswith("-") or any(c in s for c in '*?<>|"'):
-        return False
     if os.name != "nt":
-        if s in (".", ".."):
+        # a link is resolved whatever its name holds: a leading '-' or a glob character is part of the name (PR 15)
+        if not s or s in (".", ".."):
             return False
         links = _root_links(root)
         if links is None:
             return os.path.islink(os.path.join(str(root), s))
         return s in links
+    if s.startswith("-") or any(c in s for c in '*?<>|"'):
+        return False
     if _win_clean(s) != s:
         return True
     try:
@@ -492,6 +499,11 @@ def _path_forms(raw, root, force=False):
         forms.append(a)
         if a.startswith(rootn + "/"):
             forms.append(a[len(rootn) + 1:])
+    elif s and "/" not in s and GLOB_CHARS.search(s) and not s.startswith("~"):
+        # a glob that matches a link of the project root (`echo x >> led?`): resolve each matching link (PR 15)
+        links = _root_links(root) or ()
+        for name in sorted(n for n in links if fnmatch.fnmatch(n, s))[:50]:
+            forms += _path_forms(name, root, force=True)[1:]
     return forms
 
 
@@ -735,13 +747,21 @@ def string_leaves(value):
             yield from string_leaves(v)
 
 
+PS_COLON_PARAM = re.compile(r"^-[A-Za-z]+:(.+)$")
 PS_TOKEN = re.compile(r"'([^']*)'|\"([^\"]*)\"|([^\s;|&(){}<>,'\"`=]+)")
 
 
 def ps_tokens(cmd):
     """PowerShell text -> candidate path tokens. Deliberately crude: quoted strings whole, else
     runs of non-separator characters. E5 checks every one (no read-only allowlist)."""
-    return [a or b or c for a, b, c in PS_TOKEN.findall(cmd or "")]
+    toks = [a or b or c for a, b, c in PS_TOKEN.findall(cmd or "")]
+    # -Path:x, -LiteralPath:'x y', -Destination:x bind the value to the parameter with a colon (PR 15): the value is a
+    # token of its own. The parameter name is letters only, so http://h:80 is not split.
+    for tok in list(toks):
+        m = PS_COLON_PARAM.match(tok)
+        if m:
+            toks.append(m.group(1).strip("'\""))
+    return toks
 
 
 PS_FOLD = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
@@ -777,9 +797,9 @@ MUTATING = {"rm": "all", "rmdir": "all", "unlink": "all", "shred": "all", "mv": 
             "cp": "dest", "install": "dest", "dd": "of", "sed": "inplace", "perl": "inplace",
             "touch": "all"}  # touch: the estate heartbeat stamp is a file whose mtime is the evidence
 # Words that run another command given as their arguments (sudo -u root rm x, xargs rm, timeout 5 rm x).
-E2_WRAPPERS = WRAPPERS | {"timeout", "xargs", "su", "doas", "ionice"}
+E2_WRAPPERS = WRAPPERS | {"timeout", "xargs", "su", "doas", "ionice", "cmd"}
 # Shells that run a command string after -c (bash -c, bash -lc, su -c, pwsh -Command).
-SHELL_C = re.compile(r"^(?:(?:ba|z|da|k)?sh|su|pwsh|powershell)$")
+SHELL_C = re.compile(r"^(?:(?:ba|z|da|k)?sh|su|pwsh|powershell|cmd)$")   # cmd takes /c or /k (PR 15)
 FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 GLOB_CHARS = re.compile(r"[*?\[{]")
 
@@ -824,6 +844,12 @@ def _stage_marks(stage, i, hits):
             else:  # inplace
                 sel = args if any(re.match(r"^-[a-zA-Z]*i|^--in-place", stage[j][0]) for j in rest) else []
             marked.update((j, False) for j in sel)
+            break
+        if b == "cmd":  # cmd /c <command line>: everything after /c, /k or /r is the command, backslashes are separators
+            for n, j in enumerate(rest):
+                if stage[j][0].lower() in ("/c", "/k", "/r"):
+                    nested.append(_norm(" ".join(stage[x][0] for x in rest[n + 1:])))
+                    break
             break
         if SHELL_C.match(b):
             nested += [stage[j + 1][0] for j in rest[:-1]
@@ -927,8 +953,9 @@ def state_dir_rules(flag, root):
     if k.startswith(abs_state + "/"):
         exempt.append(re.escape(k[len(abs_state) + 1:]))
     tail = r"(?:/(?!(?:%s)$)|$)" % "|".join(exempt)
-    return [("^" + re.escape(abs_state) + tail, "the state directory"),
-            ("^" + re.escape(STATE_DIR) + tail, "the state directory")]
+    pre = r"(?:-[A-Za-z]+:)?"  # a PowerShell colon-bound parameter prefix: -Path:.claude/state/x
+    return [("^" + pre + re.escape(abs_state) + tail, "the state directory"),
+            ("^" + pre + re.escape(STATE_DIR) + tail, "the state directory")]
 
 
 def _lean(pat):
