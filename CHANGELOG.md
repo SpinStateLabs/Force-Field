@@ -24,18 +24,18 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 Deny-direction changes (each can turn a command that ran into an E2 deny; the first four close real bypasses):
 
-- **`cmd /c`, `cmd.exe /k` and `/r`** are shells like `bash -c`: everything after the switch is re-analysed as a command line (backslashes read as separators). `cmd /c 'echo {} > .claude\settings.local.json'`, `cmd /c 'echo x > .claude/state/secret.txt'` and `cmd /c 'type nul > field-manifest.yaml'` exited 0; they are E2 denies now. `cmd` is also an E2 wrapper and a pipeline interpreter sink.
-- **PowerShell colon-bound parameters** (`-Path:x`, `-LiteralPath:x`, `-Destination:x`) give the value as a token of its own, resolved like any path (the name must be letters only, so `http://h:80/a` is not split).
+- **`cmd /c`, `cmd.exe /k` and `/r`** are shells like `bash -c`: everything after the switch is re-analysed as a command line. The switch is matched in any case, as Git Bash's `//c`, and after other switches (`/d /s /v:on /c`). cmd's `^` escape is removed (`field-m^anifest.yaml` is `field-manifest.yaml`; the PowerShell tool gets the same treatment when the text names cmd), backslashes read as separators, and `del`, `erase`, `rd`, `move`, `ren`, `copy`, `xcopy` are judged like `rm`, `rmdir`, `mv`, `cp` (so `cmd /c 'del field-manifest.*'` is denied like `rm field-manifest.*`). `cmd /c 'echo {} > .claude\settings.local.json'`, `cmd /c 'echo x > .claude/state/secret.txt'` and `cmd /c 'type nul > field-manifest.yaml'` exited 0; they are E2 denies now.
+- **PowerShell colon-bound parameters** give the value of a path-valued parameter (`-Path`, `-LiteralPath`, `-PSPath`, `-Destination`, `-FilePath`, `-OutFile`, `-Name`, `-NewName`, `-Target`, `-OutputPath`, or a unique prefix such as `-Dest:`) as a token of its own, resolved like any path. Other values (`-Format:H:mm`, `-Pattern:a:b`, `-Value:x:y`) are data and are not read as drive-relative paths.
 - **The state-directory rule** matches after such a prefix (`-Path:.claude/state/x`), as defence in depth to the split.
-- **Bare Bash words that name a link** are resolved on POSIX whatever the name holds (a leading `-`, `?`, `*`, `"`, `<`, `>`, `|`), and a glob or character class without a slash that matches a link of the project root (`echo x >> led?`, `led*`, `l[e]d`) resolves each matching link (up to 50; `{a,b}` braces are not expanded). Windows keeps the old rule for dash and special-character names: an entry-name starting with `-` is still not resolved there, and glob matching uses the root's symlinks and junctions.
+- **Bare Bash words that name a link** are resolved on POSIX whatever the name holds (a leading `-`, `?`, `*`, `"`, `<`, `>`, `|`), and a glob or character class in the first path component that matches a link of the project root (`echo x >> led?`, `led*/f`, `./l[e]d/f`, `-l*/f`) resolves each matching link (up to 50; `{a,b}` braces are not expanded). On Windows the glob is matched against the root symlinks and junctions; a name starting with `-` is still not resolved there.
 
 Allow-direction change (removes a false deny):
 
 - **`echo a:b:c`, `Write-Output a:b:c`, `echo x:y:z`** are no longer E0 when no drive `a` / `x` exists. A drive-relative word on an existing drive (`C:foo`) is still E0. On a machine that has a drive `a:`, `echo a:b:c` is still denied.
 
-Still open (unchanged): a link created in the same command or a parallel call is invisible at check time; a glob with brace expansion; Windows dash-named links.
+Still open: a link created in the same command or a parallel call is invisible at check time; a glob with brace expansion; Windows dash-named links; `%COMSPEC% /c ...` and `winpty cmd /c ...` (the command word is not `cmd`); `cmd /c 'set A=.claude&& echo x > %A%\x'` and other shell expansion; a bare name relative to a `cd` inside the same command (the gate does not track the working directory).
 
-New suite `hooks/test/run_shell_forms.sh` (in `run_all.sh` and the Ubuntu job), plus unit cases in `test_path_canon.py`; each fix was checked against its own mutant. No ADR file exists in this repository, so there is no ADR note.
+New suite `hooks/test/run_shell_forms.sh` (in `run_all.sh` and the Ubuntu job), plus unit cases in `test_path_canon.py`; each fix was checked against its own mutant. (Earlier text said `cmd` is also a pipeline interpreter sink and E2 wrapper: that was wrong, the dead entries were removed.) No ADR file exists in this repository, so there is no ADR note.
 
 ### Known limitations (gate, ADR-0080; found in the third review, reproduced, not fixed in this PR)
 

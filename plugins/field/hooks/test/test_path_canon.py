@@ -380,4 +380,17 @@ if os.name == "nt":
 else:
     print("N/A  a:b:c drive-relative cases: Windows only")
 
+# ---- 8. PR 15 review: path-valued parameters only, each state-dir rule on its own, the empty word ----
+check("ps_tokens: -Pattern:a:b is data, not split", False, "a:b" in g.ps_tokens("Select-String -Pattern:a:b"))
+check("ps_tokens: -Format:H:mm is data, not split", False, "H:mm" in g.ps_tokens("Get-Date -Format:H:mm"))
+check("ps_tokens: -Value:x:y is data, not split", False, "x:y" in g.ps_tokens("Set-Content -Value:x:y"))
+check("ps_tokens: -Dest:x (unique prefix of -Destination) is split", True, "x/y" in g.ps_tokens("Copy-Item a -Dest:x/y"))
+check("ps_tokens: -Name:n is split", True, "n.txt" in g.ps_tokens("New-Item -Name:n.txt"))
+sd2 = tempfile.mkdtemp(prefix="canon_sd2_")
+abs_rule, rel_rule = g.state_dir_rules(".claude/state/KILL", sd2)
+abs_state = g._abs_norm(".claude/state", sd2)[0]
+check("absolute state-dir rule matches -Path:<abs state>/x", True, bool(re.search(abs_rule[0], "-Path:" + abs_state + "/x")))
+check("relative state-dir rule matches -Path:.claude/state/x", True, bool(re.search(rel_rule[0], "-Path:.claude/state/x")))
+check("relative state-dir rule still skips field.json", False, bool(re.search(rel_rule[0], "-Path:.claude/state/field.json")))
+shutil.rmtree(sd2, ignore_errors=True)
 sys.exit(1 if fail else 0)

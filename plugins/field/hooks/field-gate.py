@@ -469,7 +469,7 @@ def _bare_name_resolves(s, root):
     link is judged exactly as before. Both use one cached root listing."""
     if os.name != "nt":
         # a link is resolved whatever its name holds: a leading '-' or a glob character is part of the name (PR 15)
-        if not s or s in (".", ".."):
+        if s in (".", ".."):
             return False
         links = _root_links(root)
         if links is None:
@@ -499,11 +499,15 @@ def _path_forms(raw, root, force=False):
         forms.append(a)
         if a.startswith(rootn + "/"):
             forms.append(a[len(rootn) + 1:])
-    elif s and "/" not in s and GLOB_CHARS.search(s) and not s.startswith("~"):
-        # a glob that matches a link of the project root (`echo x >> led?`): resolve each matching link (PR 15)
+    gm = None
+    if s and not force and not s.startswith(("/", "~")) and not re.match(r"^[A-Za-z]:", s):
+        gm = re.match(r"^((?:\./)*)([^/]+)((?:/.*)?)$", s)
+    if gm and GLOB_CHARS.search(gm.group(2)):
+        # the first component is a glob that matches a link of the project root (`echo x >> led?`, `led*/f`, `./l[e]d/f`):
+        # resolve each matching link (PR 15)
         links = _root_links(root) or ()
-        for name in sorted(n for n in links if fnmatch.fnmatch(n, s))[:50]:
-            forms += _path_forms(name, root, force=True)[1:]
+        for name in sorted(n for n in links if fnmatch.fnmatch(n, gm.group(2)))[:50]:
+            forms += _path_forms(name + gm.group(3), root, force=True)[1:]
     return forms
 
 
@@ -747,7 +751,11 @@ def string_leaves(value):
             yield from string_leaves(v)
 
 
-PS_COLON_PARAM = re.compile(r"^-[A-Za-z]+:(.+)$")
+PS_COLON_PARAM = re.compile(r"^-([A-Za-z]{2,}):(.+)$")
+# Parameters whose value is a path (PowerShell accepts any unique prefix: -Dest:, -Lit:). Other values (-Format:H:mm,
+# -Pattern:a:b, -Value:x:y) are data and must not be read as drive-relative paths.
+PS_PATH_PARAMS = ("path", "literalpath", "pspath", "destination", "filepath", "outfile", "name", "newname", "target",
+                  "outputpath")
 PS_TOKEN = re.compile(r"'([^']*)'|\"([^\"]*)\"|([^\s;|&(){}<>,'\"`=]+)")
 
 
@@ -759,8 +767,8 @@ def ps_tokens(cmd):
     # token of its own. The parameter name is letters only, so http://h:80 is not split.
     for tok in list(toks):
         m = PS_COLON_PARAM.match(tok)
-        if m:
-            toks.append(m.group(1).strip("'\""))
+        if m and any(full.startswith(m.group(1).lower()) for full in PS_PATH_PARAMS):
+            toks.append(m.group(2))
     return toks
 
 
@@ -797,9 +805,9 @@ MUTATING = {"rm": "all", "rmdir": "all", "unlink": "all", "shred": "all", "mv": 
             "cp": "dest", "install": "dest", "dd": "of", "sed": "inplace", "perl": "inplace",
             "touch": "all"}  # touch: the estate heartbeat stamp is a file whose mtime is the evidence
 # Words that run another command given as their arguments (sudo -u root rm x, xargs rm, timeout 5 rm x).
-E2_WRAPPERS = WRAPPERS | {"timeout", "xargs", "su", "doas", "ionice", "cmd"}
+E2_WRAPPERS = WRAPPERS | {"timeout", "xargs", "su", "doas", "ionice"}
 # Shells that run a command string after -c (bash -c, bash -lc, su -c, pwsh -Command).
-SHELL_C = re.compile(r"^(?:(?:ba|z|da|k)?sh|su|pwsh|powershell|cmd)$")   # cmd takes /c or /k (PR 15)
+SHELL_C = re.compile(r"^(?:(?:ba|z|da|k)?sh|su|pwsh|powershell)$")
 FIND_EXEC = {"-exec", "-execdir", "-ok", "-okdir"}
 GLOB_CHARS = re.compile(r"[*?\[{]")
 
@@ -819,6 +827,21 @@ def _interpreter_sink(stage):
     """True for a stage that runs what the pipeline feeds it (`... | sh`, `... | bash -s`, `... | python3`)."""
     i = _command_index([w for w, _q in stage])
     return i is not None and bool(SHELL_C.match(_base(stage[i][0])) or INTERPRETER_RE.match(_base(stage[i][0])))
+
+
+# cmd's command switch: /c /k /r, any case, and Git Bash's //c (MSYS turns a leading // into one /)
+CMD_SWITCH = re.compile(r"^/{1,2}[ckrCKR]$")
+CMD_BUILTINS = {"del": "rm", "erase": "rm", "rd": "rmdir", "rmdir": "rmdir", "move": "mv", "ren": "mv",
+                "rename": "mv", "copy": "cp", "xcopy": "cp"}
+
+
+def _cmd_line(line):
+    """The command line after cmd /c, as the Bash analysis can read it: cmd's `^` escape removed (field-m^anifest.yaml
+    is field-manifest.yaml), backslashes as separators, and cmd's file commands renamed to their Bash twins at command
+    position (del x -> rm x, so `del field-manifest.*` is judged like `rm field-manifest.*`)."""
+    line = _norm(line.replace("^", ""))
+    return re.sub(r"(?i)(^|[&|;(]\s*)(del|erase|rd|rmdir|move|ren|rename|copy|xcopy)(?=\s|$)",
+                  lambda m: m.group(1) + CMD_BUILTINS[m.group(2).lower()], line)
 
 
 def _stage_marks(stage, i, hits):
@@ -845,10 +868,10 @@ def _stage_marks(stage, i, hits):
                 sel = args if any(re.match(r"^-[a-zA-Z]*i|^--in-place", stage[j][0]) for j in rest) else []
             marked.update((j, False) for j in sel)
             break
-        if b == "cmd":  # cmd /c <command line>: everything after /c, /k or /r is the command, backslashes are separators
+        if b == "cmd":  # cmd [/d /s /v:on] /c <command line> (PR 15)
             for n, j in enumerate(rest):
-                if stage[j][0].lower() in ("/c", "/k", "/r"):
-                    nested.append(_norm(" ".join(stage[x][0] for x in rest[n + 1:])))
+                if CMD_SWITCH.match(stage[j][0]):
+                    nested.append(_cmd_line(" ".join(stage[x][0] for x in rest[n + 1:])))
                     break
             break
         if SHELL_C.match(b):
@@ -926,6 +949,10 @@ def e2_targets(tool, ti, root, hits):
         cmd = shell_command(tool, ti)
         out.append(_norm(cmd))
         toks = text_tokens(cmd)
+        if "^" in cmd and re.search(r"(?i)\bcmd(?:\.exe)?\b", cmd):  # cmd's ^ escape: the OS sees the text without it
+            plain = cmd.replace("^", "")
+            out.append(_norm(plain))
+            toks += text_tokens(plain)
         if ">" in cmd or any(t.casefold() in PS_MUTATING for t in toks):
             globs = [t for t in ps_tokens(cmd) if GLOB_CHARS.search(t) and not re.search(r"\s", t)]
     else:  # MCP and other tools
