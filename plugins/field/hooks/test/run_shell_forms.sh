@@ -172,4 +172,7 @@ else
   echo "FAIL  fixture: the OS refused to create a symlink: $(head -n 1 "$T/lnk.err")"; fail=1
 fi
 
+# 5. data-driven: reviewer attack lines that must be denied and 108 ordinary commands that must stay allowed
+python3 cmd_corpus.py "$G" cmd_corpus_attacks.txt ordinary_commands.txt || fail=1
+
 [ "$fail" = 0 ] && echo "ALL SHELL-FORM TESTS PASSED" || { echo "SHELL-FORM TESTS FAILED"; exit 1; }

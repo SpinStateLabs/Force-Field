@@ -1,0 +1,109 @@
+# Ordinary commands that must stay allowed (third review of PR 15). Format: as in cmd_corpus_attacks.txt
+A @@ Bash @@ git status --short
+A @@ Bash @@ git log --oneline -5
+A @@ Bash @@ git diff --stat HEAD~1
+A @@ Bash @@ git commit -m "fix: tidy"
+A @@ Bash @@ git push origin main
+A @@ Bash @@ git checkout -b feat/x
+A @@ Bash @@ git stash push -m "wip"
+A @@ Bash @@ git fetch origin pull/15/head:pr15
+A @@ Bash @@ git clone https://github.com/a/b.git
+A @@ Bash @@ git log --since="2 days ago" --format=%h
+A @@ Bash @@ npm install
+A @@ Bash @@ npm run build
+A @@ Bash @@ npm test -- --coverage
+A @@ Bash @@ npx tsc --noEmit
+A @@ Bash @@ node scripts/build.js
+A @@ Bash @@ rm -r other/build
+A @@ Bash @@ rm other/x
+A @@ Bash @@ rmdir other
+A @@ Bash @@ mkdir -p other/sub
+A @@ Bash @@ cp other/x other/y
+A @@ Bash @@ mv other/x other/z
+A @@ Bash @@ ls -la
+A @@ Bash @@ cat other/x
+A @@ Bash @@ grep -rn "foo" other
+A @@ Bash @@ curl -s http://localhost:8080/health
+A @@ Bash @@ curl -s https://example.com:8443/api
+A @@ Bash @@ curl -o other/out.json "http://127.0.0.1:3000/a?b=c"
+A @@ Bash @@ docker run --rm -v a:b:c img
+A @@ Bash @@ docker run -v /tmp/x:/data:ro img
+A @@ Bash @@ date +%H:%M
+A @@ Bash @@ date "+%Y-%m-%d %H:%M:%S"
+A @@ Bash @@ echo hello > other/n.txt
+A @@ Bash @@ python3 -c "print(1)"
+A @@ Bash @@ python -m pytest -q
+A @@ Bash @@ pip install -r requirements.txt
+A @@ Bash @@ make test
+A @@ Bash @@ cmd /c dir
+A @@ Bash @@ cmd /c "dir other"
+A @@ Bash @@ cmd /c "echo hi"
+A @@ Bash @@ cmd /c ver
+A @@ Bash @@ cmd /c "rd /s /q build"
+A @@ Bash @@ cmd /c "rd /s /q other\build"
+A @@ Bash @@ cmd /c "rmdir /s /q node_modules"
+A @@ Bash @@ cmd /c "rd/s/q node_modules"
+A @@ Bash @@ cmd /c "rmdir other"
+A @@ Bash @@ cmd /c "del other\tmp.txt"
+A @@ Bash @@ cmd /c "del /q other\*.tmp"
+A @@ Bash @@ cmd /c "erase other\a.log"
+A @@ Bash @@ cmd /c "copy other\a other\b"
+A @@ Bash @@ cmd /c "move other\a other\b"
+A @@ Bash @@ cmd /c "ren other\a b"
+A @@ Bash @@ cmd /c "xcopy other other2 /e /i"
+A @@ Bash @@ cmd /c "echo x > other\n.txt"
+A @@ Bash @@ cmd /c "echo a^&b"
+A @@ Bash @@ cmd /c "echo ^^"
+A @@ Bash @@ cmd /c "echo 1 & echo 2"
+A @@ Bash @@ cmd /c "set A=1&& echo %A%"
+A @@ Bash @@ cmd /c "git status"
+A @@ Bash @@ cmd /c "npm run build"
+A @@ Bash @@ cmd /c "dir 2>nul"
+A @@ Bash @@ cmd /c "where git"
+A @@ Bash @@ cmd /c "echo del is a word"
+A @@ Bash @@ cmd /c "echo rd and ren and copy"
+A @@ Bash @@ cmd /c "type other\x"
+A @@ Bash @@ cmd /c "findstr /s foo other\*.txt"
+A @@ Bash @@ cmd /v:on /c "echo !PATH!"
+A @@ Bash @@ cmd /d /c "dir"
+A @@ Bash @@ cmd /c "start https://example.com:8080"
+A @@ Bash @@ cmd /c "echo 12:30:45"
+A @@ Bash @@ cmd /c "echo a:b:c"
+A @@ Bash @@ echo x | cmd /q
+A @@ Bash @@ echo dir | cmd
+A @@ Bash @@ echo "rd /s /q build" | cmd
+A @@ Bash @@ echo "del other\a.tmp" | cmd
+A @@ Bash @@ cmd < /dev/null
+A @@ Bash @@ cmd /?
+A @@ Bash @@ cmd
+A @@ Bash @@ cmd.exe /c "echo hi"
+A @@ Bash @@ echo "cmd /c dir" | bash
+A @@ Bash @@ rd other
+A @@ PowerShell @@ cmd /c "rd /s /q build"
+A @@ PowerShell @@ cmd /c "rd /s /q other\build"
+A @@ PowerShell @@ cmd /c "del other\tmp.txt"
+A @@ PowerShell @@ cmd /c "rd/s/q node_modules"
+A @@ PowerShell @@ cmd /c dir
+A @@ PowerShell @@ cmd /c "echo hi"
+A @@ PowerShell @@ cmd /c "set A=1&& echo %A%"
+A @@ PowerShell @@ cmd /c "echo x > other\n.txt"
+A @@ PowerShell @@ cmd /c "echo 12:30:45"
+A @@ PowerShell @@ git status
+A @@ PowerShell @@ git log --oneline -5
+A @@ PowerShell @@ npm run build
+A @@ PowerShell @@ Get-ChildItem other
+A @@ PowerShell @@ Get-Content other\x -Tail 5
+A @@ PowerShell @@ Set-Content -Path other\n.txt -Value hi
+A @@ PowerShell @@ Set-Content -Path:other\n.txt -Value:hi
+A @@ PowerShell @@ Copy-Item other\x other\y
+A @@ PowerShell @@ Remove-Item other\y
+A @@ PowerShell @@ New-Item -ItemType Directory -Path other\d
+A @@ PowerShell @@ Invoke-WebRequest -Uri http://localhost:8080/x -OutFile other\o.txt
+A @@ PowerShell @@ Get-Process node
+A @@ PowerShell @@ Get-Date -Format yyyy-MM-dd
+A @@ PowerShell @@ Write-Output "hello"
+A @@ PowerShell @@ Write-Output a:b:c
+A @@ PowerShell @@ powershell -c Get-Date
+A @@ PowerShell @@ python -m pytest -q
+A @@ PowerShell @@ docker ps
+A @@ PowerShell @@ cmd /c "echo a ^| b"

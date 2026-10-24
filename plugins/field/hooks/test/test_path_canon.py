@@ -400,7 +400,7 @@ check("ps_tokens: -Pa:x/y (two letters, a prefix of -Path) is split", True, "x/y
 check("cmd_payload: /c glued to the quote", "echo x > f", g.cmd_payload(["/cecho x > f"]))
 check("cmd_payload: //K upper case, after other switches", "echo x", g.cmd_payload(["/d", "/s", "//K", "echo", "x"]))
 check("cmd_payload: no switch, no payload", None, g.cmd_payload(["/d", "dir"]))
-check("_cmd_line: ^ and quotes removed, rd read as rmdir", "rmdir field-manifest.yaml", g._cmd_line('rd"field-m^anifest.yaml"'))
+check("_cmd_line: ^ and quotes removed, rd read as rmdir", "rmdir field-manifest.yaml", " ".join(g._cmd_line('rd"field-m^anifest.yaml"').split()))
 if os.name == "nt":
     have = [c for c in "cdef" if os.path.exists(c + ":/")]
     try:
@@ -409,5 +409,19 @@ if os.name == "nt":
     except g.UnresolvablePath:
         got = "E0"
     check("_abs_norm: %s:b:c on a mounted drive is still E0" % have[0], "E0", got)
+
+# ---- 10. PR 15 third review: bundled switches, the nesting cap of the wipe check ----
+check("cmd_payload: /d/c bundled", "echo x", g.cmd_payload(["/d/c", "echo", "x"]))
+check("cmd_payload: /s/c glued to the text", "echo x", g.cmd_payload(["/s/cecho x"]))
+check("cmd_payload: /v:on/c bundled", "echo x", g.cmd_payload(["/v:on/c", "echo x"]))
+wroot = tempfile.mkdtemp(prefix="canon_wipe_")
+os.makedirs(os.path.join(wroot, ".claude"))
+for depth, want in ((0, True), (2, True), (3, False)):
+    check("dir_wipe_target: bash -c payload followed at depth %d: %s" % (depth, want), want,
+          g.dir_wipe_target("bash -c 'rm -r .claude'", wroot, (), depth) is not None)
+    check("dir_wipe_target: cmd /c payload followed at depth %d: %s" % (depth, want), want,
+          g.dir_wipe_target('cmd /c "rd /s /q .claude"', wroot, (), depth) is not None)
+check("dir_wipe_target: bash -c 'rm -r node_modules' is no wipe", None, g.dir_wipe_target("bash -c 'rm -r node_modules'", wroot, (), 0))
+shutil.rmtree(wroot, ignore_errors=True)
 
 sys.exit(1 if fail else 0)
