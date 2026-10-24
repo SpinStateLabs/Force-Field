@@ -20,6 +20,14 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 - Workflow: `permissions: contents: read`, actions pinned to commit SHAs.
 - README: a known-bypass register (hard links, shell expansion, programs that open the path themselves, untested `net use` drives).
 
+### Known limitations (gate, ADR-0080; found in the third review, reproduced, not fixed in this PR)
+
+- **Bare-word link names with special characters (not resolved).** A link whose name begins with `-` or contains `?`, `*`, `"`, `<`, `>` or `|` is never resolved as a bare word: `echo x >> -lnk` (link `-lnk` to `.claude/state/f`) writes through it unseen. Name such a link with a slash (`./-lnk`) and it is caught.
+- **Globs that match a root link (not resolved).** `echo x >> led?` or `echo x >> led*` where `ledger` is a link into `.claude/state`: the shell expands the glob after the gate has looked at the text.
+- **A link created in the same command or in a parallel call is invisible at check time.** The gate resolves links as they exist when it runs. `ln -s .claude/state l && echo x > l/f`, or PowerShell `cmd /c mklink /D l .claude\state; echo x > l\f` / `New-Item -ItemType SymbolicLink`, creates the link and writes through it in one call, so the link protection (ADR-0080) does not apply to it. This defeats the link feature in a single call; treat link resolution as covering links that already exist.
+- **PowerShell colon-bound parameters.** `Set-Content -Path:.claude\state\x` binds the value to the flag with a colon; the state-directory pattern is anchored at the start of a token, so it does not match after the `-Path:` prefix.
+- **False deny: single-letter prefix with two or more colons.** `echo a:b:c` (also `Write-Output a:b:c`) reads as a drive-relative path `a:` and gives E0 UnresolvablePath although it is not a path. Quote-free workaround: put the text in a file or quote it so it is not a bare word.
+
 ### Planned
 
 - FORCE v1.1 refinements based on real-world usage feedback.
