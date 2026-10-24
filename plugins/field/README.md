@@ -168,6 +168,23 @@ caught, and paths resolve against the project root rather than the shell's worki
 fails open. `/field audit` produces an audit-ready report; independent certification is a separate
 service.
 
+### Known-bypass register (E2 and E5 are text-scanning controls, not a sandbox)
+
+Windows path handling (ADR-0080) resolves symlinks, junctions and 8.3 short names, strips `\\?\` prefixes, NTFS streams and trailing dots, and refuses (E0) any path it cannot map to a drive letter: UNC and admin-share (`\\localhost\C$\...`, `//localhost/C$/...`), `\\?\Volume{GUID}\`, `\\?\GLOBALROOT\Device\...`, `\\.\` device paths and drive-relative `C:x`. Local admin-share access is denied by design; a project that itself lives on a UNC share keeps working because paths under the identically cleaned root are allowed. Not covered, and not fixable by this mechanism:
+
+- **Hard links** to a protected or session-written file: `realpath` cannot see them (identical on POSIX). A hard link made by the agent through Bash is a file created by Bash itself.
+- **Shell expansion**: `$PWD`, `$(pwd)`, `${CLAUDE_PROJECT_DIR}`, `%CD%`, `$env:...`, and Git Bash `/proc/self/cwd/...` spell the path in a form the gate does not evaluate.
+- **A program that opens the path itself**: `python -c "open(...)"`, `node -e`, an editor macro.
+- **Unknown**: network drives mapped with `net use` (untested); whether Claude Code ever passes a `\\?\Volume{}`, GLOBALROOT, UNC or drive-relative path to the OS at all (the gate refuses them either way); Python versions other than 3.12 and 3.14.
+- **Refusals that can be false denies**: a word that starts with two slashes (`cat //etc/passwd`, `git diff -- //foo/bar`) is a UNC path on Windows (`\\etc\passwd`), so the gate denies E0 for it even in a read-only command; use a single slash. A path the OS cannot open to resolve (Win32 error 5, access denied, or 1920, a Store app-execution alias such as `WindowsApps/python.exe`) is kept as written rather than denied: nothing can be followed through it, and the agent could not write through it either. A directory with more than 20000 entries is not listed (the listing only saves failed opens); the path then goes to the OS directly.
+- Words of a Bash command are link-resolved when they contain a slash, start with `~`, or name an entry of the project root (`echo x >> link`). A bare word that names an entry of the current directory when that is not the project root is not resolved (the gate resolves against the project root, as above).
+- A symlink or junction **loop**, or any resolution error other than "does not exist", denies E0 on Windows. On POSIX a loop is not detected (unchanged: `realpath` returns the path as is).
+- **Bare-word link names with special characters (not resolved).** A link whose name begins with `-` or contains `?`, `*`, `"`, `<`, `>` or `|` is never resolved as a bare word: `echo x >> -lnk` (link `-lnk` to `.claude/state/f`) writes through it unseen. Name such a link with a slash (`./-lnk`) and it is caught.
+- **Globs that match a root link (not resolved).** `echo x >> led?` or `echo x >> led*` where `ledger` is a link into `.claude/state`: the shell expands the glob after the gate has looked at the text.
+- **A link created in the same command or in a parallel call is invisible at check time.** The gate resolves links as they exist when it runs. `ln -s .claude/state l && echo x > l/f`, or PowerShell `cmd /c mklink /D l .claude\state; echo x > l\f` / `New-Item -ItemType SymbolicLink`, creates the link and writes through it in one call, so the link protection (ADR-0080) does not apply to it. This defeats the link feature in a single call; treat link resolution as covering links that already exist.
+- **PowerShell colon-bound parameters.** `Set-Content -Path:.claude\state\x` binds the value to the flag with a colon; the state-directory pattern is anchored at the start of a token, so it does not match after the `-Path:` prefix.
+- **False deny: single-letter prefix with two or more colons.** `echo a:b:c` (also `Write-Output a:b:c`) reads as a drive-relative path `a:` and gives E0 UnresolvablePath although it is not a path. Quote-free workaround: put the text in a file or quote it so it is not a bare word.
+
 ## Related
 
 - Landing page: [spinstatelabs.ca/field](https://spinstatelabs.ca/field)

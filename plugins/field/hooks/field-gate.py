@@ -71,6 +71,7 @@ import hashlib
 import json
 import os
 import pathlib
+import ntpath
 import posixpath
 import re
 import shlex
@@ -119,6 +120,8 @@ WRAPPERS = {"sudo", "env", "nohup", "time", "exec", "command", "nice", "builtin"
 def project_root(inp):
     for cand in (os.environ.get("CLAUDE_PROJECT_DIR"), inp.get("cwd")):
         if cand and os.path.isdir(cand):
+            if os.name == "nt" and re.match(r"^[A-Za-z]:$", str(cand).strip()):
+                cand = ntpath.abspath(str(cand).strip())  # a bare drive (W:) is that drive's current directory
             return pathlib.Path(cand)
     return pathlib.Path.cwd()
 
@@ -240,28 +243,175 @@ def tool_call_budget(enf):
 _ROOT_CACHE = {}
 
 
+class UnresolvablePath(Exception):
+    """A Windows path spelling the gate cannot map to a drive-letter path it can match (ADR-0080)."""
+
+
+# Win32 error codes meaning "this path does not exist (yet)": resolve the part that does.
+_WIN_GONE = (2, 3, 123, 161, 267)
+# A Windows path that is not on a drive letter: UNC //host/share, or a device or volume form (//?/Volume{...}, //./pipe).
+_WIN_NONLOCAL = re.compile(r"^(//([?.]/|[^/]+/[^/]+)|/{1,2}\?\?(/|$))")
+
+
+def _win_clean(s):
+    """Windows path text that Win32 reads as the same file, made literal (ADR-0080). `s` is already
+    '/'-separated. Drops the extended-length prefix only where a drive letter follows (//?/C:/x
+    becomes C:/x; //?/UNC/host/share becomes //host/share), likewise the NT form /??/; //?/Volume{...},
+    //./ and /??/Volume forms keep their prefix so the caller can refuse them. Repeated separators after a
+    leading // collapse. Maps Git Bash /c/ to C:/. Per component: a final
+    component loses an NTFS stream suffix (file::$DATA, file:ads) and trailing dots and spaces; a
+    directory component loses trailing dots and a stream or attribute suffix that starts `:$` or `::$`
+    (dir:$I30, dir::$INDEX_ALLOCATION, dir:$I30:$INDEX_ALLOCATION: they name the directory itself). A component of three or
+    more dots is a real name and stays; `.` and `..` stay. A colon elsewhere is left alone
+    (http://host:80/a, PATH=/a:/b). Text only; no file system access."""
+    m = re.match(r"^(?://[?.]|/{1,2}\?\?)/(?:(UNC)/|(?=[A-Za-z]:(?:/|$)))", s, re.I)
+    if m:
+        s = ("//" if m.group(1) else "") + s[m.end():]
+    if s.startswith("//"):
+        s = "//" + re.sub(r"/{2,}", "/", s[2:])  # //host//share is //host/share
+    s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
+    drive = ""
+    if re.match(r"^[A-Za-z]:", s):
+        drive, s = s[:2], s[2:]
+    parts = s.split("/")
+    last = len(parts) - 1
+    for i, p in enumerate(parts):
+        if p in ("", ".", "..") or (len(p) > 2 and not p.strip(".")):
+            continue
+        if ":" in p and (i == last or ":$" in p):
+            p = p.split(":", 1)[0]
+        p = p.rstrip(". ") if i == last else p.rstrip(".")
+        parts[i] = p
+    return drive + "/".join(parts)
+
+
+_REAL_CACHE = {}
+_LIST_CACHE = {}
+_LIST_MAX = 20000  # a directory with more entries is not listed (a cold huge listing could outlast the 10 s hook timeout)
+# Win32 errors that mean "cannot be opened to be resolved" (a Store app-execution alias, an access-denied system directory):
+# nothing can be followed, so the path is kept as is. Anything else (a loop, 1921) raises.
+_WIN_OPAQUE = (5, 1920)
+
+
+def _absent(parent, name):
+    """True only when `name` certainly names no entry of the directory `parent` (already resolved). Names that
+    could be an alias of an entry (8.3 short names carry '~'; non-ASCII names fold by NTFS's own table) are never
+    called absent, nor is anything in a directory over _LIST_MAX entries. The listing is read once per directory
+    (the hook is one process per tool call) and compared case-insensitively, as NTFS does."""
+    if "~" in name or not name.isascii():
+        return False
+    if parent not in _LIST_CACHE:
+        names = set()
+        try:
+            with os.scandir(parent) as it:
+                for entry in it:
+                    names.add(entry.name.casefold())
+                    if len(names) > _LIST_MAX:
+                        names = None
+                        break
+        except OSError:
+            names = None
+        _LIST_CACHE[parent] = names
+    names = _LIST_CACHE[parent]
+    return names is not None and name.casefold() not in names
+
+
+def _win_real(s, _hops=0):
+    """Windows: realpath of `s` (symlinks, junctions, 8.3 names), strictly. `..` is collapsed first, as
+    Win32 does. The longest existing prefix is resolved and the rest appended. A dangling symlink or junction is
+    followed as far as it goes (it may point at a protected file that does not exist yet). An error that means
+    the path cannot be opened (_WIN_OPAQUE) keeps the path; any other error other than 'does not exist' (a
+    symlink or junction loop, 1921) raises OSError and the gate denies E0: Python's lenient realpath returns the
+    path unresolved for a loop, which would let it through. The parent directory is resolved once and cached (one
+    hook process per tool call), and a name the parent's listing does not contain skips the failing open."""
+    cur = ntpath.normpath(s)
+    hit = _REAL_CACHE.get(cur)
+    if hit is not None:
+        return hit
+    try:
+        # a final component of three or more dots opens its parent on Win32 (the name is not a real directory
+        # entry): treat it as not existing so it stays in the result
+        dots = len(ntpath.basename(cur)) > 2 and not ntpath.basename(cur).strip(".")
+        if dots:
+            raise FileNotFoundError(cur)
+        parent, name = ntpath.split(cur)
+        if name and parent != cur:
+            rp = _win_real(parent)
+            if _absent(rp, name):  # certainly no such entry: skip the failing open
+                out = ntpath.join(rp, name)
+                _REAL_CACHE[cur] = out
+                return out
+        out = os.path.realpath(cur, strict=True)
+    except OSError as exc:
+        werr = getattr(exc, "winerror", None)
+        if isinstance(exc, (FileNotFoundError, NotADirectoryError)) or werr in _WIN_GONE:
+            parent, name = ntpath.split(cur)
+            dots = len(name) > 2 and not name.strip(".")
+            if not dots and os.path.lexists(cur):  # dangling link: follow it as far as it goes
+                out = os.path.realpath(cur)
+                # lenient realpath leaves 8.3 names in the missing tail; resolve the target again
+                if ntpath.normpath(out).casefold() != cur.casefold():
+                    if _hops > 20:
+                        raise OSError("too many dangling-link hops: " + cur)
+                    out = _win_real(out, _hops + 1)
+            else:
+                out = cur if (not name or parent == cur) else ntpath.join(_win_real(parent), name)
+        elif werr in _WIN_OPAQUE:
+            out = cur
+        else:
+            raise
+    _REAL_CACHE[cur] = out
+    return out
+
+
+def _root_text(key):
+    """Windows project root as cleaned text; a bare drive (`W:`, the drive's current directory) is made absolute."""
+    k = _win_clean(_norm(key))
+    if re.match(r"^[A-Za-z]:(?!/)", k):
+        k = _norm(ntpath.abspath(k))
+    return k
+
+
 def _root_norm(root):
     """(normalised project root, win). Windows is detected from a drive letter or os.name; there
-    the root is case-folded, on POSIX symlinks are resolved. Cached: called once per token."""
+    the root is case-folded and cleaned (_win_clean) and, since ADR-0080, resolved with realpath
+    (symlinks, junctions, 8.3 names) as on POSIX. Cached: called once per token."""
     key = str(root)
     if key not in _ROOT_CACHE:
         win = bool(re.match(r"^[A-Za-z]:", _norm(key))) or os.name == "nt"
-        rootn = posixpath.normpath(_norm(key if win else os.path.realpath(key)))
+        if os.name == "nt":
+            rootn = posixpath.normpath(_win_clean(_norm(_win_real(_root_text(key)))))
+        elif win:
+            rootn = posixpath.normpath(_norm(key))
+        else:
+            rootn = posixpath.normpath(_norm(os.path.realpath(key)))
         _ROOT_CACHE[key] = (rootn.casefold() if win else rootn, win)
     return _ROOT_CACHE[key]
 
 
 def _abs_norm(raw, root):
     """(normalised absolute POSIX-style path, normalised root). ~ expanded, backslashes to '/',
-    relative paths joined to the root, Git Bash /c/ mapped to C:/ and case folded on Windows,
-    symlinks and '..' resolved on POSIX (realpath), then normpath."""
+    relative paths joined to the root. On Windows: Git Bash /c/ mapped to C:/, extended-length
+    prefixes, NTFS streams and trailing dots removed (_win_clean), symlinks, junctions and 8.3
+    names resolved (_win_real), the result case folded. A path that is not on a drive letter (UNC,
+    volume-GUID, GLOBALROOT and device forms, drive-relative C:x) raises UnresolvablePath unless it is
+    under the identically cleaned project root; so does a symlink loop or access error (OSError):
+    main() turns either into an E0 deny. On POSIX: symlinks and '..' resolved by realpath."""
     rootn, win = _root_norm(root)
     s = _norm(os.path.expanduser(str(raw or ""))).strip()
     if win:
-        s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
+        if os.name == "nt":
+            s = _win_clean(s)
+            if (_WIN_NONLOCAL.match(s) and not (s.casefold() + "/").startswith(rootn + "/")) \
+                    or re.match(r"^[A-Za-z]:(?!/|$)", s):
+                raise UnresolvablePath("path is not on a drive letter the gate can match (UNC, volume, device or drive-relative form)")
+        else:
+            s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
     if not (s.startswith("/") or re.match(r"^[A-Za-z]:/", s)):
         s = rootn + "/" + s
-    if not win:
+    if os.name == "nt":
+        s = _win_clean(_norm(_win_real(s)))
+    elif not win:
         s = _norm(os.path.realpath(s))
     s = posixpath.normpath(s)
     return (s.casefold() if win else s), rootn
@@ -281,6 +431,53 @@ def path_key(raw, root):
     return "sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+_LINK_CACHE = {}
+
+
+def _root_links(root):
+    """POSIX: the names of the symlinks directly under the project root (dangling ones included), from one cached
+    listing, so a command of thousands of words costs one scandir. None when the root cannot be listed or holds
+    more than _LIST_MAX entries: the caller then asks the file system about each word."""
+    key = str(root)
+    if key not in _LINK_CACHE:
+        links = set()
+        try:
+            with os.scandir(key) as it:
+                for n, entry in enumerate(it, 1):
+                    if n > _LIST_MAX:
+                        links = None
+                        break
+                    if entry.is_symlink():
+                        links.add(entry.name)
+        except OSError:
+            links = None
+        _LINK_CACHE[key] = links
+    return _LINK_CACHE[key]
+
+
+def _bare_name_resolves(s, root):
+    """A bare word (no '/', so not otherwise resolved) that names a link in the project root, or that Win32 would
+    read differently (stream, trailing dot), is resolved like a path: `echo x >> link` writes through a link.
+    Windows: any entry of the root (links and 8.3 aliases cannot be told apart cheaply). POSIX (since ADR-0080,
+    PR 14): only a symlink, dangling or not, so a plain bare word is never resolved and a command that names no
+    link is judged exactly as before. Both use one cached root listing."""
+    if s.startswith("-") or any(c in s for c in '*?<>|"'):
+        return False
+    if os.name != "nt":
+        if s in (".", ".."):
+            return False
+        links = _root_links(root)
+        if links is None:
+            return os.path.islink(os.path.join(str(root), s))
+        return s in links
+    if _win_clean(s) != s:
+        return True
+    try:
+        return not _absent(_win_real(_root_text(str(root))), s)
+    except OSError:
+        return True
+
+
 def _path_forms(raw, root, force=False):
     """Strings E2 matches for one value: as given (backslashes to '/') and, when it looks like a
     path (contains '/', starts with '~', or force), its normalised absolute form and, inside the
@@ -288,6 +485,8 @@ def _path_forms(raw, root, force=False):
     matched by the same patterns as the plain name."""
     s = _norm(raw).strip()
     forms = [s]
+    if s and not (force or "/" in s or s.startswith("~")) and _bare_name_resolves(s, root):
+        force = True
     if s and (force or "/" in s or s.startswith("~")):
         a, rootn = _abs_norm(s, root)
         forms.append(a)
