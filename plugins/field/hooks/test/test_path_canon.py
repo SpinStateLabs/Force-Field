@@ -393,4 +393,21 @@ check("absolute state-dir rule matches -Path:<abs state>/x", True, bool(re.searc
 check("relative state-dir rule matches -Path:.claude/state/x", True, bool(re.search(rel_rule[0], "-Path:.claude/state/x")))
 check("relative state-dir rule still skips field.json", False, bool(re.search(rel_rule[0], "-Path:.claude/state/field.json")))
 shutil.rmtree(sd2, ignore_errors=True)
+
+# ---- 9. PR 15 second review ----
+check("ps_tokens: -P:x (one letter) is not split", False, "x/y" in g.ps_tokens("Set-Content -P:x/y -Value v"))
+check("ps_tokens: -Pa:x/y (two letters, a prefix of -Path) is split", True, "x/y" in g.ps_tokens("Set-Content -Pa:x/y -Value v"))
+check("cmd_payload: /c glued to the quote", "echo x > f", g.cmd_payload(["/cecho x > f"]))
+check("cmd_payload: //K upper case, after other switches", "echo x", g.cmd_payload(["/d", "/s", "//K", "echo", "x"]))
+check("cmd_payload: no switch, no payload", None, g.cmd_payload(["/d", "dir"]))
+check("_cmd_line: ^ and quotes removed, rd read as rmdir", "rmdir field-manifest.yaml", g._cmd_line('rd"field-m^anifest.yaml"'))
+if os.name == "nt":
+    have = [c for c in "cdef" if os.path.exists(c + ":/")]
+    try:
+        g._abs_norm(have[0] + ":b:c", "C:/proj")
+        got = "no error"
+    except g.UnresolvablePath:
+        got = "E0"
+    check("_abs_norm: %s:b:c on a mounted drive is still E0" % have[0], "E0", got)
+
 sys.exit(1 if fail else 0)

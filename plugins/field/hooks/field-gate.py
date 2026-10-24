@@ -826,12 +826,14 @@ def _xargs_mutating(stage):
 def _interpreter_sink(stage):
     """True for a stage that runs what the pipeline feeds it (`... | sh`, `... | bash -s`, `... | python3`)."""
     i = _command_index([w for w, _q in stage])
-    return i is not None and bool(SHELL_C.match(_base(stage[i][0])) or INTERPRETER_RE.match(_base(stage[i][0])))
+    return i is not None and bool(SHELL_C.match(_base(stage[i][0])) or INTERPRETER_RE.match(_base(stage[i][0]))
+                                  or _base(stage[i][0]) == "cmd")  # cmd reads its commands from stdin (PR 15)
 
 
-# cmd's command switch: /c /k /r, any case, and Git Bash's //c (MSYS turns a leading // into one /)
-CMD_SWITCH = re.compile(r"^/{1,2}[ckrCKR]$")
-CMD_BUILTINS = {"del": "rm", "erase": "rm", "rd": "rmdir", "rmdir": "rmdir", "move": "mv", "ren": "mv",
+# cmd's command switch: /c /k /r, any case, Git Bash's //c (MSYS turns a leading // into one /). cmd takes the rest of
+# the token as the command (`/c"echo x"`, `"/c echo x"`, `//cecho x`), so the switch is matched at the start of a word.
+CMD_SWITCH = re.compile(r"^/{1,2}[ckrCKR](.*)$", re.S)
+CMD_BUILTINS = {"del": "rm", "erase": "rm", "rd": "rmdir", "move": "mv", "ren": "mv",
                 "rename": "mv", "copy": "cp", "xcopy": "cp"}
 
 
@@ -839,9 +841,19 @@ def _cmd_line(line):
     """The command line after cmd /c, as the Bash analysis can read it: cmd's `^` escape removed (field-m^anifest.yaml
     is field-manifest.yaml), backslashes as separators, and cmd's file commands renamed to their Bash twins at command
     position (del x -> rm x, so `del field-manifest.*` is judged like `rm field-manifest.*`)."""
-    line = _norm(line.replace("^", ""))
-    return re.sub(r"(?i)(^|[&|;(]\s*)(del|erase|rd|rmdir|move|ren|rename|copy|xcopy)(?=\s|$)",
+    line = _norm(line.replace("^", "").replace('"', " ")).strip()  # a quote only splits words for cmd: del"x" is del x
+    return re.sub(r"(?i)(^|[&|;(]\s*)(del|erase|rd|move|ren|rename|copy|xcopy)(?=\s|$)",
                   lambda m: m.group(1) + CMD_BUILTINS[m.group(2).lower()], line)
+
+
+def cmd_payload(words):
+    """The command line cmd runs, from the words after the cmd command word: everything from the first /c, /k or /r
+    switch (the rest of that word included), else None."""
+    for n, w in enumerate(words):
+        m = CMD_SWITCH.match(w)
+        if m:
+            return _cmd_line(" ".join([m.group(1)] + list(words[n + 1:])))
+    return None
 
 
 def _stage_marks(stage, i, hits):
@@ -869,10 +881,9 @@ def _stage_marks(stage, i, hits):
             marked.update((j, False) for j in sel)
             break
         if b == "cmd":  # cmd [/d /s /v:on] /c <command line> (PR 15)
-            for n, j in enumerate(rest):
-                if CMD_SWITCH.match(stage[j][0]):
-                    nested.append(_cmd_line(" ".join(stage[x][0] for x in rest[n + 1:])))
-                    break
+            payload = cmd_payload([stage[j][0] for j in rest])
+            if payload is not None:
+                nested.append(payload)
             break
         if SHELL_C.match(b):
             nested += [stage[j + 1][0] for j in rest[:-1]
@@ -906,6 +917,7 @@ def bash_e2_words(cmd, root, hits, depth=0):
     for pipe in _split(words):
         xargs_mut = any(_xargs_mutating(st) for st in pipe)
         sink = any(_interpreter_sink(st) for st in pipe)  # echo "rm x" | sh: upstream quoted text is a command
+        cmd_sink = any(_base(st[0][0]) == "cmd" for st in pipe if st)  # ... | cmd: and read as a cmd command line
         for stage in pipe:
             plain += [w for w, q in stage if not q]
             marked = {j + 1: False for j, (w, _q) in enumerate(stage[:-1]) if REDIRECT.match(w)}
@@ -914,7 +926,7 @@ def bash_e2_words(cmd, root, hits, depth=0):
                 m, nested = _stage_marks(stage, i, hits)
                 marked.update(m)
                 if sink and not _interpreter_sink(stage):
-                    nested += [w for w, q in stage if q]
+                    nested += [_cmd_line(w) if cmd_sink else w for w, q in stage if q]
                 for n in nested if depth < 3 else []:
                     p, g = bash_e2_words(n, root, hits, depth + 1)
                     plain += p
@@ -950,9 +962,7 @@ def e2_targets(tool, ti, root, hits):
         out.append(_norm(cmd))
         toks = text_tokens(cmd)
         if "^" in cmd and re.search(r"(?i)\bcmd(?:\.exe)?\b", cmd):  # cmd's ^ escape: the OS sees the text without it
-            plain = cmd.replace("^", "")
-            out.append(_norm(plain))
-            toks += text_tokens(plain)
+            toks += text_tokens(cmd.replace("^", ""))
         if ">" in cmd or any(t.casefold() in PS_MUTATING for t in toks):
             globs = [t for t in ps_tokens(cmd) if GLOB_CHARS.search(t) and not re.search(r"\s", t)]
     else:  # MCP and other tools
@@ -1025,7 +1035,7 @@ def _find_wipes(seg, i):
     return deletes and not any(w in ("-name", "-iname", "-path", "-ipath", "-regex", "-iregex") for w in rest)
 
 
-def dir_wipe_target(cmd, root, guard=()):
+def dir_wipe_target(cmd, root, guard=(), depth=0):
     """Label of an argument of a Bash rm/rmdir/mv/shred/unlink (or an unfiltered find -delete) that
     is the project directory, one of its parents or the .claude/ directory (where the state and
     settings live) or a directory in `guard` ((absolute path, label) pairs), else None."""
@@ -1039,6 +1049,11 @@ def dir_wipe_target(cmd, root, guard=()):
         if i is None:
             continue
         b = _base(seg[i])
+        if b == "cmd" and depth < 3:  # cmd /c "rd /s /q .claude" wipes like rmdir/rm -r (PR 15)
+            payload = cmd_payload(seg[i + 1:])
+            hit = dir_wipe_target(payload, root, guard, depth + 1) if payload is not None else None
+            if hit:
+                return hit
         if b not in DESTRUCTIVE and not (b == "find" and _find_wipes(seg, i)):
             continue
         for t in seg[i + 1:]:
@@ -1065,6 +1080,13 @@ def shell_pattern_hit(tool, cmd, globs, names, root, guard=()):
         if hit:
             return f"shell glob/brace pattern expands to {hit}"
     hit = dir_wipe_target(cmd, root, guard) if tool == "Bash" else None
+    if not hit and tool == "PowerShell":  # PowerShell runs cmd /c "rd /s /q .claude" too: judge its payload like Bash
+        m = re.search(r"(?i)\bcmd(?:\.exe)?(?:\s+/[a-z][^\s]*)*?\s+/{1,2}[ckr]\s*(.*)$", cmd, re.S)
+        if m:
+            payload = m.group(1).strip()
+            if len(payload) > 1 and payload[0] == payload[-1] and payload[0] in "'" + chr(34):
+                payload = payload[1:-1]
+            hit = dir_wipe_target(_cmd_line(payload), root, guard)
     return f"destructive command aimed at {hit}" if hit else None
 
 

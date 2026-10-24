@@ -59,6 +59,30 @@ expect "E2 deny: cmd /c 'del field-manifest.*' (glob, aligned with rm)"         
 expect "E2 deny: cmd /c 'del /q /f field-manifest.yaml'"                         2 "$(bash_ "cmd /c 'del /q /f field-manifest.yaml'")" E2
 expect "E2 deny: cmd /c 'echo a & move other\x field-manifest.yaml'"              2 "$(bash_ "cmd /c 'echo a & move other${BS}x field-manifest.yaml'")" E2
 expect "E2 deny (PowerShell): cmd /c \"echo x > field-manifest.ya^ml\""          2 "$(ps_ 'cmd /c "echo x > field-manifest.ya^ml"')" E2
+# 1c. second review of PR 15: glued switches, rd /s, cmd as a pipe sink, escaped quotes, each cmd file command
+expect "E2 deny: cmd /c\"echo x > field-manifest.yaml\" (switch glued to the quote)"  2 "$(bash_ 'cmd /c"echo x > field-manifest.yaml"')" E2
+expect "E2 deny: cmd \"/c echo x > field-manifest.yaml\" (switch inside the first arg)" 2 "$(bash_ 'cmd "/c echo x > field-manifest.yaml"')" E2
+expect "E2 deny: cmd /d //c\"echo x > field-manifest.yaml\""                          2 "$(bash_ 'cmd /d //c"echo x > field-manifest.yaml"')" E2
+expect "E2 deny: cmd /c del field-manifest.yaml (unquoted: every word after /c)"       2 "$(bash_ 'cmd /c del field-manifest.yaml')" E2
+expect "E2 deny: cmd /c \"del\\\"field-manifest.yaml\\\"\" (escaped quotes)"            2 "$(bash_ 'cmd /c "del\"field-manifest.yaml\""')" E2
+expect "E2 deny: cmd /c \"rd /s /q .claude\" (recursive removal of .claude)"           2 "$(bash_ 'cmd /c "rd /s /q .claude"')" E2
+expect "E2 deny: cmd /c \"rmdir /s /q .claude\""                                       2 "$(bash_ 'cmd /c "rmdir /s /q .claude"')" E2
+expect "E2 deny: cmd /c \"rd /s /q .\" (the project directory)"                        2 "$(bash_ 'cmd /c "rd /s /q ."')" E2
+expect "E2 deny: cmd /c rd /s /q .claude (unquoted)"                                    2 "$(bash_ 'cmd /c rd /s /q .claude')" E2
+expect "E2 deny (PowerShell): cmd /c \"rd /s /q .claude\""                             2 "$(ps_ 'cmd /c "rd /s /q .claude"')" E2
+expect "E2 deny (PowerShell): cmd.exe /d /c \"rd /s /q .\""                            2 "$(ps_ 'cmd.exe /d /c "rd /s /q ."')" E2
+expect "E2 allow: cmd /c \"rd /s /q other\" (control)"                                 0 "$(bash_ 'cmd /c "rd /s /q other"')"
+expect "E2 allow (PowerShell): cmd /c \"rd /s /q other\" (control)"                    0 "$(ps_ 'cmd /c "rd /s /q other"')"
+expect "E2 deny: echo \"echo x > field-manifest.yaml\" | cmd (cmd reads stdin)"         2 "$(bash_ 'echo "echo x > field-manifest.yaml" | cmd')" E2
+expect "E2 deny: echo \"del field-manifest.*\" | cmd.exe"                              2 "$(bash_ 'echo "del field-manifest.*" | cmd.exe')" E2
+expect "E2 allow: echo \"echo hi > notes.txt\" | cmd (control)"                        0 "$(bash_ 'echo "echo hi > notes.txt" | cmd')"
+# each cmd file command is read as its Bash twin (a glob is judged only for the marked words of a known command)
+for c in "del field-manifest.*" "erase field-manifest.*" "rd field-manifest.*" "rmdir field-manifest.*"          "ren field-manifest.* x" "rename field-manifest.* x" "copy other${BS}a field-manifest.*" "xcopy other${BS}a field-manifest.*"; do
+  expect "E2 deny: cmd /c '$c' (file command with a glob)"                               2 "$(bash_ "cmd /c '$c'")" E2
+done
+for c in "echo a & del field-manifest.*" "echo a | del field-manifest.*" "echo a ; del field-manifest.*" "(del field-manifest.*)"; do
+  expect "E2 deny: cmd /c '$c' (command position)"                                       2 "$(bash_ "cmd /c '$c'")" E2
+done
 expect "E2 allow: cmd /c 'del notes.*' (control)"                                0 "$(bash_ "cmd /c 'del notes.*'")"
 expect "E2 allow: cmd //c 'echo hi > no^tes.txt' (control)"                      0 "$(bash_ "cmd //c 'echo hi > no^tes.txt'")"
 expect "E2 allow: cmd /c 'echo hi > notes.txt' (control)"          0 "$(bash_ "cmd /c 'echo hi > notes.txt'")"
@@ -74,6 +98,16 @@ expect "allow (PowerShell): Get-Date -Format:H:mm (data, not a path)"           
 expect "allow (PowerShell): Select-String -Path:*.md -Pattern:a:b"              0 "$(ps_ "Select-String -Path:*.md -Pattern:a:b")"
 expect "allow (PowerShell): Set-Content -Path:other${BS}n.txt -Value:x:y"       0 "$(ps_ "Set-Content -Path:other${BS}n.txt -Value:x:y")"
 expect "E2 allow (PowerShell): Set-Content -Path:other/notes.txt (control)"   0 "$(ps_ "Set-Content -Path:other/notes.txt -Value x")"
+
+# 2b. a rule anchored at the project root (^secrets/): only the split value can match it (the whole token starts with -X:)
+P2="$T/p2"; mkdir -p "$P2/.claude/state" "$P2/secrets"
+sed "s|protected_paths: \[\]|protected_paths: ['^secrets/']|" field-manifest.yaml > "$P2/field-manifest.yaml"
+grep -q "secrets/" "$P2/field-manifest.yaml" || { echo "FAIL  fixture: protected_paths rule not written"; fail=1; }
+for prm in Path LiteralPath PSPath Destination FilePath OutFile Name NewName Target OutputPath Dest Lit; do
+  expect "E2 deny (PowerShell): -$prm:secrets/x is a path (rule ^secrets/)"             2 "$(CLAUDE_PROJECT_DIR="$P2" ps_ "Set-Content -$prm:secrets/x -Value v")" E2
+done
+expect "E2 allow (PowerShell): -Value:secrets/x is data (control)"                      0 "$(CLAUDE_PROJECT_DIR="$P2" ps_ "Set-Content other/n -Value:secrets/x")"
+expect "E2 allow (PowerShell): -P:secrets/x (one letter is no unique prefix)"           0 "$(CLAUDE_PROJECT_DIR="$P2" ps_ "Set-Content -P:secrets/x -Value v")"
 
 # 3. a:b:c is not a drive path
 FREE1=""; FREE2=""
@@ -117,6 +151,15 @@ if mk_link -dl ".claude/state/newf" && mk_link ledger_l ".claude/state/ledger" &
     expect "E2 deny: echo x >> d[i]rl/f"                                        2 "$(bash_ 'echo x >> d[i]rl/f')" E2
     expect "E2 deny: echo x >> ./dir*/f"                                        2 "$(bash_ 'echo x >> ./dir*/f')" E2
     expect "E2 deny: echo x >> dir*  (junction/dir link, bare glob)"            2 "$(bash_ 'echo x >> dir*')" E2
+    if mk_dirlink rootl ""; then
+      expect "E2 deny: echo x >> rootl*/field-manifest.yaml (the tail after the glob matters)" 2 "$(bash_ 'echo x >> rootl*/field-manifest.yaml')" E2
+    else
+      echo "FAIL  fixture: could not create a directory link to the root: $(head -n 1 "$T/lnk.err")"; fail=1
+    fi
+    # the tail after the glob only matters to a rule anchored at the root (^secrets/): the bare token never matches it
+    if is_windows; then cmd /c "mklink /J $(cygpath -w "$P2/rootl2") $(cygpath -w "$P2")" >"$T/lnk.err" 2>&1; else ln -s "$P2" "$P2/rootl2" 2>"$T/lnk.err"; fi
+    expect "E2 deny: echo x >> rootl*/secrets/x (rule ^secrets/ reached through a glob and its tail)" 2 "$(CLAUDE_PROJECT_DIR="$P2" bash_ 'echo x >> rootl*/secrets/x')" E2
+    expect "E2 allow: echo x >> rootl*/other/x (control)"                         0 "$(CLAUDE_PROJECT_DIR="$P2" bash_ 'echo x >> rootl*/other/x')"
     expect "E2 allow: echo x >> nomatch*/f (control)"                           0 "$(bash_ 'echo x >> nomatch*/f')"
     expect "E2 allow: echo x >> oth*/f (glob matching a plain dir, control)"    0 "$(bash_ 'echo x >> oth*/f')"
   else
