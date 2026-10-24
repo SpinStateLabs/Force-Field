@@ -389,6 +389,13 @@ def _root_norm(root):
     return _ROOT_CACHE[key]
 
 
+def _drive_relative(s, before_clean=None):
+    """True for a drive-relative word (C:x). On Windows only when that drive exists: `a:b`, `x:y:z`, "a:b" in
+    `npm test --grep "a:b"` name nothing the OS can open, so they are no E0 (PR 15). Elsewhere (a simulated
+    Windows root) every such word is refused."""
+    return bool(re.match(r"^[A-Za-z]:(?!/|$)", s)) and (sys.platform != "win32" or os.path.exists(s[0] + ":/"))
+
+
 def _abs_norm(raw, root):
     """(normalised absolute POSIX-style path, normalised root). ~ expanded, backslashes to '/',
     relative paths joined to the root. On Windows: Git Bash /c/ mapped to C:/, extended-length
@@ -401,9 +408,9 @@ def _abs_norm(raw, root):
     s = _norm(os.path.expanduser(str(raw or ""))).strip()
     if win:
         if os.name == "nt":
-            s = _win_clean(s)
+            before_clean, s = s, _win_clean(s)
             if (_WIN_NONLOCAL.match(s) and not (s.casefold() + "/").startswith(rootn + "/")) \
-                    or re.match(r"^[A-Za-z]:(?!/|$)", s):
+                    or _drive_relative(s, before_clean):
                 raise UnresolvablePath("path is not on a drive letter the gate can match (UNC, volume, device or drive-relative form)")
         else:
             s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
@@ -447,7 +454,7 @@ def _root_links(root):
                     if n > _LIST_MAX:
                         links = None
                         break
-                    if entry.is_symlink():
+                    if entry.is_symlink() or getattr(entry, "is_junction", lambda: False)():
                         links.add(entry.name)
         except OSError:
             links = None
@@ -461,15 +468,16 @@ def _bare_name_resolves(s, root):
     Windows: any entry of the root (links and 8.3 aliases cannot be told apart cheaply). POSIX (since ADR-0080,
     PR 14): only a symlink, dangling or not, so a plain bare word is never resolved and a command that names no
     link is judged exactly as before. Both use one cached root listing."""
-    if s.startswith("-") or any(c in s for c in '*?<>|"'):
-        return False
     if os.name != "nt":
+        # a link is resolved whatever its name holds: a leading '-' or a glob character is part of the name (PR 15)
         if s in (".", ".."):
             return False
         links = _root_links(root)
         if links is None:
             return os.path.islink(os.path.join(str(root), s))
         return s in links
+    if s.startswith("-") or any(c in s for c in '*?<>|"'):
+        return False
     if _win_clean(s) != s:
         return True
     try:
@@ -492,6 +500,15 @@ def _path_forms(raw, root, force=False):
         forms.append(a)
         if a.startswith(rootn + "/"):
             forms.append(a[len(rootn) + 1:])
+    gm = None
+    if s and not force and not s.startswith(("/", "~")) and not re.match(r"^[A-Za-z]:", s):
+        gm = re.match(r"^((?:\./)*)([^/]+)((?:/.*)?)$", s)
+    if gm and GLOB_CHARS.search(gm.group(2)):
+        # the first component is a glob that matches a link of the project root (`echo x >> led?`, `led*/f`, `./l[e]d/f`):
+        # resolve each matching link (PR 15)
+        links = _root_links(root) or ()
+        for name in sorted(n for n in links if fnmatch.fnmatch(n, gm.group(2)))[:50]:
+            forms += _path_forms(name + gm.group(3), root, force=True)[1:]
     return forms
 
 
@@ -735,13 +752,25 @@ def string_leaves(value):
             yield from string_leaves(v)
 
 
+PS_COLON_PARAM = re.compile(r"^-([A-Za-z]{2,}):(.+)$")
+# Parameters whose value is a path (PowerShell accepts any unique prefix: -Dest:, -Lit:). Other values (-Format:H:mm,
+# -Pattern:a:b, -Value:x:y) are data and must not be read as drive-relative paths.
+PS_PATH_PARAMS = ("path", "literalpath", "pspath", "destination", "filepath", "outfile", "name", "newname", "target",
+                  "outputpath")
 PS_TOKEN = re.compile(r"'([^']*)'|\"([^\"]*)\"|([^\s;|&(){}<>,'\"`=]+)")
 
 
 def ps_tokens(cmd):
     """PowerShell text -> candidate path tokens. Deliberately crude: quoted strings whole, else
     runs of non-separator characters. E5 checks every one (no read-only allowlist)."""
-    return [a or b or c for a, b, c in PS_TOKEN.findall(cmd or "")]
+    toks = [a or b or c for a, b, c in PS_TOKEN.findall(cmd or "")]
+    # -Path:x, -LiteralPath:'x y', -Destination:x bind the value to the parameter with a colon (PR 15): the value is a
+    # token of its own. The parameter name is letters only, so http://h:80 is not split.
+    for tok in list(toks):
+        m = PS_COLON_PARAM.match(tok)
+        if m and any(full.startswith(m.group(1).lower()) for full in PS_PATH_PARAMS):
+            toks.append(m.group(2))
+    return toks
 
 
 PS_FOLD = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
@@ -798,7 +827,75 @@ def _xargs_mutating(stage):
 def _interpreter_sink(stage):
     """True for a stage that runs what the pipeline feeds it (`... | sh`, `... | bash -s`, `... | python3`)."""
     i = _command_index([w for w, _q in stage])
-    return i is not None and bool(SHELL_C.match(_base(stage[i][0])) or INTERPRETER_RE.match(_base(stage[i][0])))
+    return i is not None and bool(SHELL_C.match(_base(stage[i][0])) or INTERPRETER_RE.match(_base(stage[i][0]))
+                                  )
+
+
+# cmd's command switch: /c /k /r, any case, Git Bash's //c (MSYS turns a leading // into one /). cmd takes the rest of
+# the token as the command (`/c"echo x"`, `"/c echo x"`, `//cecho x`), so the switch is matched at the start of a word.
+CMD_SWITCH = re.compile(r"^(?:/[A-Za-z](?::[A-Za-z0-9]+)?)*?/{1,2}[ckrCKR](.*)$", re.S)  # also bundled: /d/c, /s/c, /v:on/c
+CMD_BUILTINS = {"del": "rm", "erase": "rm", "rd": "rmdir", "move": "mv", "ren": "mv",
+                "rename": "mv", "copy": "cp", "xcopy": "cp"}
+
+
+def _cmd_line(line):
+    """The command line after cmd /c, as the Bash analysis can read it: cmd's `^` escape removed (field-m^anifest.yaml
+    is field-manifest.yaml), backslashes as separators, and cmd's file commands renamed to their Bash twins at command
+    position (del x -> rm x, so `del field-manifest.*` is judged like `rm field-manifest.*`)."""
+    line = _norm(line.replace("^", "").replace('"', " ")).strip()  # a quote only splits words for cmd: del"x" is del x
+    line = re.sub(r"[()&|]+", " & ", line)  # ( ) & | split commands whether or not spaces surround them
+    # call x, start [/b] x, do x, else x, `if <condition> x` and a leading @ leave x at command position: read them as
+    # command separators. rd/s/q (no spaces) is rd /s /q.
+    line = re.sub(r"(?i)(?<![\w./-])(?:call|start(?:\s+/\w+(?::\S+)?)*|do|else)\s+"
+                  r"|(?<![\w./-])if\s+(?:/i\s+)?(?:not\s+)?(?:exist\s+\S+|defined\s+\S+|errorlevel\s+\d+|\S+==\S+)\s+",
+                  "& ", line).replace("@", "")
+    return re.sub(r"(?i)(^|[&|;(]\s*)(del|erase|rd|rmdir|move|ren|rename|copy|xcopy)(?=[\s/]|$)",
+                  lambda m: m.group(1) + CMD_BUILTINS.get(m.group(2).lower(), "rmdir") + " ", line)
+
+
+def cmd_payload(words):
+    """The command line cmd runs, from the words after the cmd command word: everything from the first /c, /k or /r
+    switch (the rest of that word included), else None."""
+    for n, w in enumerate(words):
+        m = CMD_SWITCH.match(w)
+        if m:
+            return _cmd_line(" ".join([m.group(1)] + list(words[n + 1:])))
+    return None
+
+
+BACKSLASH = chr(92)
+
+
+def _lines_of(word):
+    """A quoted word as lines: real newlines and a literal backslash-n (printf 'rd x\n') both end a line."""
+    return word.replace(BACKSLASH + "n", "\n").replace(BACKSLASH + "r", "\n").split("\n")
+
+
+def cmd_stdin_lines(cmd):
+    """When the command line runs a cmd at all (`echo "rd /s /q .claude" | cmd /k`, `cmd <<< "..."`, `cmd <<EOF`),
+    cmd may read command lines from stdin whatever its switches (/k keeps reading): every piece of the text is a
+    candidate cmd line: each quoted or spaced word (split at newlines), each stage, and each stage without its first
+    word (`echo rd x | cmd`: the producer is not part of the line). Returns those lines read as cmd lines (_cmd_line);
+    [] when no cmd runs. An over-approximation that only matters when such a line touches a protected path."""
+    try:
+        stages = [st for pipe in _split(_shell_words(cmd)) for st in pipe]
+    except ValueError:
+        return []
+    runs_cmd = False
+    for st in stages:
+        i = _command_index([w for w, _q in st])
+        if i is not None and _base(st[i][0]) == "cmd":
+            runs_cmd = True
+    if not runs_cmd:
+        return []
+    lines = []
+    for st in stages:
+        words = [w for w, _q in st]
+        for w, q in st:
+            if q or " " in w:
+                lines += _lines_of(w)
+        lines += [" ".join(words), " ".join(words[1:])]
+    return [_cmd_line(ln) for ln in dict.fromkeys(lines) if ln.strip()]
 
 
 def _stage_marks(stage, i, hits):
@@ -824,6 +921,11 @@ def _stage_marks(stage, i, hits):
             else:  # inplace
                 sel = args if any(re.match(r"^-[a-zA-Z]*i|^--in-place", stage[j][0]) for j in rest) else []
             marked.update((j, False) for j in sel)
+            break
+        if b == "cmd":  # cmd [/d /s /v:on] /c <command line> (PR 15)
+            payload = cmd_payload([stage[j][0] for j in rest])
+            if payload is not None:
+                nested.append(payload)
             break
         if SHELL_C.match(b):
             nested += [stage[j + 1][0] for j in rest[:-1]
@@ -854,6 +956,11 @@ def bash_e2_words(cmd, root, hits, depth=0):
     except ValueError:
         return ps_tokens(cmd), []
     plain, globs = [], []
+    if depth == 0:
+        for ln in cmd_stdin_lines(cmd):
+            p, g = bash_e2_words(ln, root, hits, depth + 1)
+            plain += p
+            globs += g
     for pipe in _split(words):
         xargs_mut = any(_xargs_mutating(st) for st in pipe)
         sink = any(_interpreter_sink(st) for st in pipe)  # echo "rm x" | sh: upstream quoted text is a command
@@ -866,8 +973,12 @@ def bash_e2_words(cmd, root, hits, depth=0):
                 marked.update(m)
                 if sink and not _interpreter_sink(stage):
                     nested += [w for w, q in stage if q]
-                for n in nested if depth < 3 else []:
-                    p, g = bash_e2_words(n, root, hits, depth + 1)
+                for n in nested:
+                    if depth < 3:
+                        p, g = bash_e2_words(n, root, hits, depth + 1)
+                    else:  # beyond the cap: every word of the rest counts, a protected word or glob anywhere denies
+                        p = ps_tokens(n)
+                        g = [x for x in p if GLOB_CHARS.search(x)]
                     plain += p
                     globs += g
                 if xargs_mut:
@@ -880,6 +991,12 @@ def bash_e2_words(cmd, root, hits, depth=0):
                 if GLOB_CHARS.search(w) and (not q or quoted_glob_ok):
                     globs.append(w)
     return plain, globs
+
+
+def ps_as_bash(cmd):
+    """PowerShell text for the Bash analysis: backslashes as separators, { } script blocks as command separators
+    (`if ($x) { cmd /c "..." }` has cmd at command position, like `& { ... }`; ( ) already split commands)."""
+    return re.sub(r"[{}]", " ; ", _norm(cmd))
 
 
 def e2_targets(tool, ti, root, hits):
@@ -900,8 +1017,14 @@ def e2_targets(tool, ti, root, hits):
         cmd = shell_command(tool, ti)
         out.append(_norm(cmd))
         toks = text_tokens(cmd)
+        if "^" in cmd and re.search(r"(?i)\bcmd(?:\.exe)?\b", cmd):  # cmd's ^ escape: the OS sees the text without it
+            toks += text_tokens(cmd.replace("^", ""))
         if ">" in cmd or any(t.casefold() in PS_MUTATING for t in toks):
             globs = [t for t in ps_tokens(cmd) if GLOB_CHARS.search(t) and not re.search(r"\s", t)]
+        if re.search(r"(?i)\bcmd(?:\.exe)?\b", cmd):  # a cmd line inside the text: its words and globs, read as Bash (PR 15)
+            p, g = bash_e2_words(ps_as_bash(cmd), root, hits)
+            toks += p
+            globs += g
     else:  # MCP and other tools
         for v in string_leaves(ti):
             out.append(_norm(v).strip())
@@ -927,8 +1050,9 @@ def state_dir_rules(flag, root):
     if k.startswith(abs_state + "/"):
         exempt.append(re.escape(k[len(abs_state) + 1:]))
     tail = r"(?:/(?!(?:%s)$)|$)" % "|".join(exempt)
-    return [("^" + re.escape(abs_state) + tail, "the state directory"),
-            ("^" + re.escape(STATE_DIR) + tail, "the state directory")]
+    pre = r"(?:-[A-Za-z]+:)?"  # a PowerShell colon-bound parameter prefix: -Path:.claude/state/x
+    return [("^" + pre + re.escape(abs_state) + tail, "the state directory"),
+            ("^" + pre + re.escape(STATE_DIR) + tail, "the state directory")]
 
 
 def _lean(pat):
@@ -971,26 +1095,70 @@ def _find_wipes(seg, i):
     return deletes and not any(w in ("-name", "-iname", "-path", "-ipath", "-regex", "-iregex") for w in rest)
 
 
-def dir_wipe_target(cmd, root, guard=()):
+# Label for text the wipe check cannot read to the end (nested deeper than three levels) that names a
+# removal verb or a protected path: denied, not allowed (fail closed).
+BEYOND = "a command line nested more than three levels deep that names a removal or a protected path (not analysed, so denied)"
+RISKY = re.compile(r"(?i)(?<![A-Za-z0-9_-])(?:rm|rmdir|rd|del|erase|unlink|shred|mv|move|ren|rename|remove-item|ri|robocopy|format)(?![A-Za-z0-9_-])"
+                   r"|-delete|field-manifest|hooks[.]json|[.]claude|settings(?:[.]local)?[.]json|ESTATE_KILL|field-ledger")
+
+
+def _risky(text):
+    """True when text holds a removal verb or a built-in protected name: the text a fail-closed check must not wave through."""
+    return bool(RISKY.search(_norm(text)))
+
+
+def dir_wipe_target(cmd, root, guard=(), depth=0):
     """Label of an argument of a Bash rm/rmdir/mv/shred/unlink (or an unfiltered find -delete) that
     is the project directory, one of its parents or the .claude/ directory (where the state and
-    settings live) or a directory in `guard` ((absolute path, label) pairs), else None."""
+    settings live) or a directory in `guard` ((absolute path, label) pairs), else None. Follows bash -c / sh -c /
+    -Command payloads, cmd payloads and cmd reading stdin, three levels deep. An accident guard, not a security
+    boundary: it reads text, not the process the command becomes (see the known-bypass register in the README)."""
     rootn, _win = _root_norm(root)
     try:
         segs = _segments(cmd)
-    except ValueError:
+    except ValueError:  # unbalanced quotes: the E5 tokenisation already denies the call (E0, fail closed)
         return None
+    if depth == 0:  # cmd reading its lines from a pipe, here-string or here-document
+        for ln in cmd_stdin_lines(cmd):
+            hit = dir_wipe_target(ln, root, guard, 1)
+            if hit:
+                return hit
     for seg in segs:
         i = _command_index(seg)
         if i is None:
             continue
         b = _base(seg[i])
+        if b == "cmd":  # cmd /c "rd /s /q .claude" wipes like rmdir/rm -r (PR 15)
+            payload = cmd_payload(seg[i + 1:])
+            if payload is not None and depth >= 3:
+                if _risky(payload):
+                    return BEYOND
+            elif payload is not None:
+                hit = dir_wipe_target(payload, root, guard, depth + 1)
+                if hit:
+                    return hit
+        if SHELL_C.match(b):  # bash -c 'rm -r .claude', sh -c, pwsh -Command: judge the payload like top level
+            for n, w in enumerate(seg[i + 1:-1]):
+                if re.match(r"^-[a-zA-Z]*c$", w) or w == "-Command":
+                    payload = seg[i + 2 + n]
+                    if depth >= 3:
+                        if _risky(payload):
+                            return BEYOND
+                        continue
+                    hit = dir_wipe_target(payload, root, guard, depth + 1)
+                    if hit:
+                        return hit
         if b not in DESTRUCTIVE and not (b == "find" and _find_wipes(seg, i)):
             continue
+        args = [x for x in seg[i + 1:] if not x.startswith("-")]
+        if b == "mv" and len(args) >= 2:  # mv x . moves x: the last argument is the destination, not removed
+            args = args[:-1]
         for t in seg[i + 1:]:
             if t.startswith("-"):
                 if b == "find":
                     break  # find's options start here; the start directories came before
+                continue
+            if b == "mv" and t not in args:
                 continue
             a, _ = _abs_norm(t, root)
             if a == rootn + "/.claude":
@@ -1003,6 +1171,23 @@ def dir_wipe_target(cmd, root, guard=()):
     return None
 
 
+def unreadable_input(cmd):
+    """Reason when the command hands a shell its commands in a form the gate cannot read: cmd reading a file
+    (`cmd < script.bat`) or an encoded PowerShell command (-EncodedCommand / -enc). Denied outright (fail closed)."""
+    if re.search(r"(?i)\b(?:powershell|pwsh)(?:[.]exe)?\b[^|;&]*\s-(?:e|ec|enc|encodedcommand)\b", cmd):
+        return "an encoded PowerShell command the gate cannot read"
+    try:
+        stages = [st for pipe in _split(_shell_words(cmd)) for st in pipe]
+    except ValueError:
+        return None
+    for st in stages:
+        words = [w for w, _q in st]
+        i = _command_index(words)
+        if i is not None and _base(words[i]) == "cmd" and "<" in words[i + 1:]                 and words[words.index("<", i + 1) + 1:][:1] not in (["/dev/null"], ["nul"], ["NUL"]):
+            return "cmd reading its commands from a file or process the gate cannot see"
+    return None
+
+
 def shell_pattern_hit(tool, cmd, globs, names, root, guard=()):
     """E2 reason when one of the selected glob/brace words expands to a governance path, or (Bash)
     when rm/rmdir/mv/shred/unlink is aimed at the project directory, a parent or .claude/; else None."""
@@ -1010,7 +1195,13 @@ def shell_pattern_hit(tool, cmd, globs, names, root, guard=()):
         hit = glob_hit(w, names, root)
         if hit:
             return f"shell glob/brace pattern expands to {hit}"
+    if tool in ("Bash", "PowerShell"):
+        why = unreadable_input(cmd)
+        if why:
+            return why
     hit = dir_wipe_target(cmd, root, guard) if tool == "Bash" else None
+    if not hit and tool == "PowerShell":  # PowerShell text reads as a Bash line well enough: cmd /c "..." and rm/mv/rmdir -r
+        hit = dir_wipe_target(ps_as_bash(cmd), root, guard)
     return f"destructive command aimed at {hit}" if hit else None
 
 

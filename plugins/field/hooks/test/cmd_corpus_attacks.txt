@@ -1,0 +1,165 @@
+# commands that must be denied (second and third review of PR 15). DW = denied on Windows only (case and name rules). Format: D, DW or A, then the tool, then the command, separated by the at-at marker; {NL} {TAB}
+D @@ Bash @@ cmd /c "rd/s/q .claude"
+D @@ Bash @@ cmd /c "rd /S /Q .claude"
+D @@ Bash @@ cmd /c "rmdir/s .claude"
+D @@ Bash @@ cmd /c "cd .claude && rd /s /q ."
+D @@ Bash @@ cmd /c "rd /s /q .claude\state"
+D @@ Bash @@ cmd /c "del /s /q .claude\*"
+D @@ Bash @@ cmd /c "rmdir /s /q .\.claude"
+D @@ Bash @@ cmd /c "del /f /s /q field-manifest.yaml"
+D @@ Bash @@ cmd /c "erase field-manifest.yaml"
+D @@ Bash @@ cmd /c "xcopy other\x .claude\state\ /y"
+D @@ Bash @@ cmd /c "powershell -c Remove-Item -Recurse .claude"
+D @@ Bash @@ cmd /v:on /c "echo x > field-manifest.yaml"
+D @@ Bash @@ cmd /e:on /c"echo x > field-manifest.yaml"
+D @@ Bash @@ cmd /c^"echo x > field-manifest.yaml^"
+D @@ Bash @@ cmd /c ""echo x > field-manifest.yaml""
+D @@ Bash @@ cmd{TAB}/c{TAB}"echo x > field-manifest.yaml"
+D @@ Bash @@ CmD /C "echo x > field-manifest.yaml"
+D @@ Bash @@ cmd /c@echo x > field-manifest.yaml
+D @@ Bash @@ echo "del field-manifest.yaml" | cmd /q
+D @@ Bash @@ cmd <<< "del field-manifest.yaml"
+D @@ Bash @@ cmd <<EOF{NL}del field-manifest.yaml{NL}EOF
+D @@ Bash @@ cmd < <(echo del field-manifest.yaml)
+D @@ Bash @@ bash -c 'rm -r .claude'
+D @@ Bash @@ cmd /c "rd /s /q ."
+D @@ Bash @@ cmd /c "rmdir /s /q ./"
+D @@ Bash @@ cmd /c "rd /s /q .claude & echo ok"
+D @@ Bash @@ cmd /c "echo ok & rd /s /q .claude"
+D @@ Bash @@ cmd /c "echo ok && rd /s /q .claude"
+D @@ Bash @@ cmd /c "echo ok || rd /s /q .claude"
+D @@ Bash @@ bash -c 'cmd /c "rd /s /q .claude"'
+D @@ Bash @@ cmd /c "cmd /c rd /s /q .claude"
+D @@ Bash @@ cmd /c "cmd /c echo x > field-manifest.yaml"
+D @@ Bash @@ cmd /c "start /b cmd /c rd /s /q .claude"
+D @@ Bash @@ cmd /c "start rd /s /q .claude"
+D @@ Bash @@ cmd /c "call rd /s /q .claude"
+D @@ Bash @@ cmd /c "@rd /s /q .claude"
+D @@ Bash @@ cmd /c "(rd /s /q .claude)"
+D @@ Bash @@ cmd /c "pushd .claude & rd /s /q ."
+D @@ Bash @@ cmd /c "cd /d .claude & rd /s /q ."
+D @@ Bash @@ cmd /c "rd /s /q .claude\"
+D @@ Bash @@ cmd /c "rd /s /q .claude\."
+D @@ Bash @@ cmd /c "rd /s /q .claude\\"
+DW @@ Bash @@ cmd /c "RD /S /Q .Claude"
+DW @@ Bash @@ cmd /c "rd /s /q .claude."
+DW @@ Bash @@ cmd /c "rd /s /q .claude::$INDEX_ALLOCATION"
+D @@ Bash @@ cmd /c "del /s /q field-manifest.*"
+D @@ Bash @@ cmd /c "del /s /q .\*"
+D @@ Bash @@ cmd /c "del /q *.*"
+D @@ Bash @@ cmd /c "echo y| del *.*"
+D @@ Bash @@ cmd /c "move .claude other\c"
+D @@ Bash @@ cmd /c "ren .claude c2"
+D @@ Bash @@ cmd /c "move /y other\x .claude\settings.local.json"
+D @@ Bash @@ cmd /c "type nul > .claude\settings.local.json"
+D @@ Bash @@ cmd /c "echo x>>.claude\state\log"
+D @@ Bash @@ cmd /c "copy nul field-manifest.yaml"
+D @@ Bash @@ cmd /c "attrib -r field-manifest.yaml && echo x > field-manifest.yaml"
+D @@ Bash @@ cmd /c "powershell -c \"Set-Content field-manifest.yaml x\""
+D @@ Bash @@ cmd /c "powershell Set-Content .claude\state\f x"
+D @@ PowerShell @@ cmd /c "rd/s/q .claude"
+D @@ PowerShell @@ cmd /c "rd /s /q ."
+D @@ PowerShell @@ cmd /c "cd .claude && rd /s /q ."
+D @@ PowerShell @@ cmd /c "rmdir /s /q .\.claude"
+D @@ PowerShell @@ cmd.exe /c "rd /s /q .claude"
+D @@ PowerShell @@ & cmd /c "rd /s /q .claude"
+D @@ PowerShell @@ cmd /d /c "rd /s /q .claude"
+D @@ PowerShell @@ cmd /c 'rd /s /q .claude'
+D @@ PowerShell @@ cmd /c rd /s /q .claude
+D @@ PowerShell @@ cmd /c"rd /s /q .claude"
+D @@ PowerShell @@ cmd "/c rd /s /q .claude"
+D @@ PowerShell @@ echo "rd /s /q .claude" | cmd
+D @@ PowerShell @@ "rd /s /q .claude" | cmd
+D @@ PowerShell @@ cmd /c "echo x > field-manifest.yaml"
+D @@ PowerShell @@ cmd /c "echo x > .claude\state\f"
+D @@ PowerShell @@ Remove-Item -Recurse -Force .claude
+D @@ PowerShell @@ Remove-Item -Recurse -Force .
+D @@ PowerShell @@ rmdir -r -fo .claude
+D @@ PowerShell @@ rm -r -fo .claude
+D @@ PowerShell @@ powershell -c Remove-Item -Recurse .claude
+D @@ PowerShell @@ pwsh -c "Remove-Item -Recurse -Force ."
+D @@ PowerShell @@ bash -c 'rm -r .claude'
+D @@ Bash @@ cmd /d/c "echo x > field-manifest.yaml"
+D @@ Bash @@ cmd /s/c "echo x > field-manifest.yaml"
+D @@ Bash @@ cmd /q/c "echo x > field-manifest.yaml"
+D @@ Bash @@ cmd /d/s/c "echo x > field-manifest.yaml"
+D @@ Bash @@ cmd /d/c "rd /s /q .claude"
+D @@ Bash @@ cmd /c "rd/s/q .claude"
+D @@ Bash @@ cmd /c "rmdir/s .claude"
+D @@ Bash @@ cmd /c "@rd /s /q .claude"
+D @@ Bash @@ cmd /c "call rd /s /q .claude"
+D @@ Bash @@ cmd /c "start /b rd /s /q .claude"
+D @@ Bash @@ cmd /c "if exist .claude rd /s /q .claude"
+D @@ Bash @@ cmd /c "for %i in (a) do rd /s /q .claude"
+D @@ Bash @@ cmd /c "echo a || rd /s /q .claude"
+D @@ Bash @@ echo "rd /s /q .claude" | cmd
+D @@ Bash @@ cmd <<< "rd /s /q .claude"
+D @@ Bash @@ cmd <<EOF{NL}rd /s /q .claude{NL}EOF
+D @@ Bash @@ cmd <<< "del field-manifest.*"
+D @@ Bash @@ bash -c 'rm -r .claude'
+D @@ Bash @@ sh -c "rm -r ."
+D @@ Bash @@ bash -lc "rmdir .claude"
+D @@ Bash @@ bash -c 'cmd /c "rd /s /q .claude"'
+D @@ Bash @@ cmd /c cmd /c cmd /c rd /s /q .claude
+D @@ Bash @@ cmd /c cmd /c cmd /c cmd /c rd /s /q .claude
+A @@ Bash @@ cmd /c cmd /c cmd /c cmd /c echo hi
+A @@ Bash @@ bash -c 'rm -r node_modules'
+A @@ Bash @@ sh -c "rm -r build"
+A @@ Bash @@ cmd /c "rd /s /q other"
+A @@ Bash @@ cmd /c "if exist other rd /s /q other"
+A @@ Bash @@ cmd /d/c "echo hi > notes.txt"
+A @@ Bash @@ echo "dir" | cmd
+A @@ PowerShell @@ cmd /c "echo hi > notes.txt"
+A @@ PowerShell @@ cmd /c "rd /s /q other"
+D @@ PowerShell @@ cmd /c "del field-manifest.*"
+D @@ PowerShell @@ cmd /c 'del field-manifest.*'
+D @@ PowerShell @@ cmd /c "del *.yaml"
+D @@ PowerShell @@ cmd /c "del /s /q .claude\*"
+D @@ PowerShell @@ cmd /c "copy nul field-manifest.y*"
+D @@ PowerShell @@ cmd /c "move other\x field-manifest.*"
+D @@ PowerShell @@ cmd "/c rd /s /q .claude"
+D @@ PowerShell @@ cmd /d/c "rd /s /q .claude"
+D @@ PowerShell @@ echo "rd /s /q .claude" | cmd
+D @@ PowerShell @@ "rd /s /q .claude" | cmd
+D @@ PowerShell @@ cmd /c "rd/s/q .claude"
+D @@ PowerShell @@ cmd /c "@rd /s /q .claude"
+D @@ PowerShell @@ cmd /c "if exist .claude rd /s /q .claude"
+D @@ PowerShell @@ bash -c 'rm -r .claude'
+D @@ PowerShell @@ rmdir .\.claude
+D @@ PowerShell @@ rm -r .\.claude
+D @@ Bash @@ echo "echo x > field-manifest.yaml" | cmd /k
+D @@ Bash @@ echo "echo x > field-manifest.yaml" | cmd /c
+D @@ Bash @@ echo "echo x > field-manifest.yaml" | cmd /k echo
+D @@ Bash @@ echo "echo x > field-manifest.yaml" | cmd /q /k
+D @@ Bash @@ echo "rd /s /q .claude" | cmd /k
+D @@ Bash @@ cmd /k <<< "rd /s /q .claude"
+D @@ Bash @@ echo "del field-manifest.*" | cmd /k
+D @@ PowerShell @@ echo "rd /s /q .claude" | cmd /k
+D @@ PowerShell @@ "del field-manifest.*" | cmd /k
+D @@ Bash @@ echo rd /s /q .claude | cmd
+D @@ Bash @@ echo del field-manifest.* | cmd
+D @@ Bash @@ printf 'rd /s /q .claude\n' | cmd
+D @@ Bash @@ cmd /c "echo a&(rd /s /q .claude)"
+D @@ Bash @@ cmd /c "(echo a)&(del field-manifest.*)"
+D @@ Bash @@ cmd /c "echo a&&(rd /s /q .claude)"
+D @@ PowerShell @@ if ($true) { cmd /c "del field-manifest.*" }
+D @@ PowerShell @@ 1..2 | % { cmd /c "rd /s /q .claude" }
+D @@ PowerShell @@ try { cmd /c "rd /s /q .claude" } catch {}
+D @@ PowerShell @@ foreach ($i in 1..2) { cmd /c "del field-manifest.*" }
+D @@ PowerShell @@ {cmd /c "rd /s /q .claude"}
+D @@ Bash @@ cmd /c cmd /c cmd /c cmd /c cmd /c del field-manifest.*
+D @@ Bash @@ bash -c "bash -c \"bash -c \\\"bash -c 'rm -r .'\\\"\""
+D @@ Bash @@ cmd < script.bat
+D @@ PowerShell @@ powershell -EncodedCommand AAAA
+D @@ Bash @@ pwsh -enc AAAA
+D @@ Bash @@ pwsh -Command "rmdir .claude"
+D @@ Bash @@ powershell -Command "rm -r ."
+D @@ Bash @@ echo "unbalanced; rm -r .claude
+A @@ Bash @@ mv other/a.txt .
+A @@ Bash @@ bash -c "mv x ."
+A @@ Bash @@ cmd /c "move x ."
+A @@ Bash @@ npm test -- --grep "a:b"
+A @@ Bash @@ cmd /c cmd /c cmd /c cmd /c echo hi
+A @@ Bash @@ cmd < /dev/null
+A @@ PowerShell @@ if ($true) { cmd /c "echo hi" }
+A @@ PowerShell @@ 1..2 | % { echo hi }
