@@ -165,6 +165,8 @@ jobs:
         run: bash plugins/field/hooks/test/run_shell_forms.sh
       - name: Incremental ledger index tests (differential against the old code, sidecar attacks)
         run: bash plugins/field/hooks/test/run_ledger_index.sh
+      - name: hooks.json tests (gate hook fails closed, onFailure block; ADR-0081)
+        run: bash plugins/field/hooks/test/run_hooks_config.sh
 
   # ADR-0080: the gate runs on Windows (Git Bash, as Claude Code runs hooks there) and must resolve junctions and
   # symlinks, strip extended-length prefixes and NTFS streams, and see 8.3 names. run_all.sh runs every suite, fails

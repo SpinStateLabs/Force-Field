@@ -217,7 +217,8 @@ expect "E2 deny: MCP HOOKS.JSON"                         2 "$(call e2w mcp__fs__
 expect "E2 deny: PowerShell Remove-Item *.yaml"          2 "$(call e2 PowerShell '{"command":"Remove-Item *.yaml"}')"
 expect "E2 allow: PowerShell Remove-Item *.py"           0 "$(call e2 PowerShell '{"command":"Remove-Item *.py"}')"
 expect "E2 allow: MCP content with '*' bullets is not a glob" 0 "$(call e2w mcp__fs__write_file '{"path":"notes.md","content":"* item\n* item two\na * b"}')"
-# F3: size caps and a time budget. A hook killed by the hooks.json timeout fails open; the gate denies first.
+# F3: size caps and a time budget. A hook killed by the hooks.json timeout fails open before Claude Code 2.1.295 and
+# blocks from then on (onFailure "block", ADR-0081), with Claude Code's timeout notice; the gate denies first, with its reason.
 expect "E0 deny: 70 KB shell command" 2 "$(call e2 Bash "$(python3 -c "import json; print(json.dumps({'command': '; '.join('bash a%d' % i for i in range(6000))}))")")"
 r=$(python3 -c "import json; print(json.dumps({'session_id':'e2w','tool_name':'Write','tool_input':{'file_path':'big.txt','content':'A'*(5*1024*1024)}}))" | python3 "$G" >/dev/null 2>&1; echo $?)
 expect "E0 deny: 5 MB hook input" 2 "$r"
