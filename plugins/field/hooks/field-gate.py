@@ -512,25 +512,6 @@ def _path_forms(raw, root, force=False):
     return forms
 
 
-def session_written_paths(ledger_path, session):
-    """Path keys this session was allowed to write via a file tool. Raises ValueError on an
-    unreadable record, so the caller fails closed."""
-    written = set()
-    if not ledger_path.exists():
-        return written
-    for n, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            raise ValueError(f"ledger line {n} is not valid JSON")
-        if (isinstance(rec, dict) and rec.get("session") == session and rec.get("decision") == "allow"
-                and rec.get("tool") in FILE_TOOLS and isinstance(rec.get("path"), str)):
-            written.add(rec["path"])
-    return written
-
-
 READ_ONLY = {"cat", "ls", "head", "tail", "less", "more", "wc", "grep", "rg", "diff", "stat", "file",
              "git", "sha256sum", "md5sum", "chmod", "echo", "printf", "test", "["}
 SHELL_KEYWORDS = {"if", "then", "elif", "else", "do", "while", "until", "!", "{", "}", "(", ")", "time", "coproc"}
@@ -656,16 +637,458 @@ def exec_suspect_tokens(cmd, depth=0, root=None, written=None):
     return out
 
 
+# ---- incremental ledger index (fix/gate-incremental-ledger) -------------------------------------------------
+# The gate used to read the WHOLE ledger on every call: ledger_append for the last record's hash, and E5
+# (session_written_exec) for every record. ~13 us per ledger line, so ~4 s of CPU at 300 000 lines, against a
+# 10 s hook timeout that fails OPEN. Now the work is proportional to what was appended since the last call.
+#
+# What the old code checked, and what this keeps (nothing is relaxed):
+#   - the whole ledger decodes as strict UTF-8                          -> UnicodeDecodeError, denies E0
+#   - the last record is a JSON object with a "hash"                    -> exception, denies E0
+#   - E5 only: every non-blank line is valid JSON                        -> ValueError, denies E0
+#   - E5 only: the set of paths this session was allowed to write
+# The old code did NOT verify the hash chain per call (verify-ledger.py does, offline); neither does this.
+#
+# A sidecar in the protected state directory remembers how far the ledger was verified. It is only a cache:
+#   - missing, unparseable, wrong checksum/version/ledger, other file identity, file shorter than the offset,
+#     or tail bytes before the offset changed: ignored, the whole ledger is verified from byte 0;
+#   - each call re-hashes one random completed segment (and re-derives its E5/ask entries) and compares
+#     with the sidecar; a mismatch discards the sidecar and verifies from byte 0.
+# A full verification that cannot finish inside the time budget persists its progress and denies E0
+# ("being rebuilt"; the next call continues), instead of running into the hook timeout, which allows the call.
+IDX_VERSION = 1
+IDX_SEG_LINES = 512           # physical lines per checkpoint segment (one is re-checked per call: ~9 ms)
+IDX_TAIL = 4096               # bytes before the offset whose digest binds the sidecar to the ledger
+IDX_PERSIST_BYTES = 128 * 1024  # persist the sidecar once this much new ledger was scanned (or after a rebuild)
+IDX_MAX_SIDECAR = 256 * 1024 * 1024
+EXEC_RULE = "E3-policy-executed"  # field-post.py's record; kept equal there by a test
+ASK_RULE = "E3-policy"
+
+
+class LedgerIndexBusy(RuntimeError):
+    """Full verification of the ledger did not finish inside the time budget (progress was saved)."""
+
+
+def _idx_pick(n):
+    """Which completed segment to re-check on this call (0 <= result < n). A test patches this."""
+    return int.from_bytes(os.urandom(4), "big") % n
+
+
+def _idx_sidecar(ledger_path, root):
+    base = pathlib.Path(root) / STATE_DIR if root is not None else pathlib.Path(ledger_path).parent
+    tag = hashlib.sha256(os.path.abspath(str(ledger_path)).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    return base / f"field-ledger-{tag}.idx"
+
+
+def _idx_new(ident):
+    return {"id": ident, "off": 0, "n": 0, "cl": 0, "head": "", "tail": "", "bad": 0,
+            "segs": [], "posts": {}, "asks": {}}
+
+
+def _idx_pieces(tgt, chunk, line_off, seg_i):
+    """Fold one physical ledger line (bytes without its \\n) into tgt, exactly as the old whole-file scans saw
+    it: text.splitlines() pieces, blank pieces skipped (but counted), a piece that is not JSON recorded in
+    tgt['bad'] (first one wins). UnicodeDecodeError propagates (the old read_text raised it)."""
+    text = chunk.decode("utf-8")
+    for piece in (text.splitlines() or [""]):
+        tgt["n"] += 1
+        if not piece.strip():
+            continue
+        try:
+            rec = json.loads(piece)
+        except (ValueError, RecursionError):
+            if not tgt["bad"]:
+                tgt["bad"] = tgt["n"]
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if isinstance(rec.get("hash"), str):
+            tgt["head"] = rec["hash"]
+        sess = rec.get("session")
+        if not isinstance(sess, str):
+            continue
+        if rec.get("decision") == "allow" and rec.get("tool") in FILE_TOOLS and isinstance(rec.get("path"), str):
+            tgt["posts"].setdefault(sess, {}).setdefault(rec["path"], seg_i)
+        tuid = rec.get("tool_use_id")
+        if isinstance(tuid, str):
+            kind = "x" if rec.get("rule") == EXEC_RULE else (
+                "a" if rec.get("decision") == "ask" and rec.get("rule") == ASK_RULE else None)
+            if kind and json.dumps(tuid)[1:-1] in piece:  # field-post.py's needle test, applied to the id itself
+                tgt["asks"][json.dumps([sess, tuid])] = [kind, line_off]
+
+
+def _idx_scan(fh, state, deadline, open_data=b""):
+    """Verify and index the complete lines from state['off'] to EOF, advancing state line by line.
+    open_data: the bytes of the open segment before state['off'] (its digest covers them too).
+    Returns (rest_bytes, rest_offset): the unterminated tail, not part of state. Raises LedgerIndexBusy
+    (state is consistent at the last complete line) when the deadline passes."""
+    segh = hashlib.sha256()
+    segh.update(open_data)
+    fh.seek(state["off"])
+    buf, base = b"", state["off"]
+    while True:
+        block = fh.read(1 << 20)
+        if not block:
+            break
+        buf += block
+        pos = 0
+        while True:
+            j = buf.find(b"\n", pos)
+            if j < 0:
+                break
+            _idx_pieces(state, buf[pos:j], base + pos, len(state["segs"]))
+            segh.update(buf[pos:j + 1])
+            pos = j + 1
+            state["cl"] += 1
+            state["off"] = base + pos
+            if state["cl"] % IDX_SEG_LINES == 0:
+                state["segs"].append([state["off"], segh.hexdigest(), state["n"]])
+                segh = hashlib.sha256()
+        buf, base = buf[pos:], base + pos
+        if deadline is not None and time.monotonic() > deadline:
+            raise LedgerIndexBusy("ledger index is being rebuilt (%d bytes verified); the next call continues"
+                                  % state["off"])
+    return buf, base
+
+
+def _idx_tail_digest(fh, off):
+    start = max(0, off - IDX_TAIL)
+    fh.seek(start)
+    return hashlib.sha256(fh.read(off - start)).hexdigest()
+
+
+def _idx_encode(state, ledger_path):
+    meta = {"v": IDX_VERSION, "ledger": os.path.abspath(str(ledger_path)), "id": state["id"], "off": state["off"],
+            "n": state["n"], "cl": state["cl"], "head": state["head"], "tail": state["tail"], "bad": state["bad"],
+            "segs": state["segs"]}
+    body = json.dumps({"posts": state["posts"], "asks": state["asks"]}, sort_keys=True).encode("utf-8")
+    meta["psum"] = hashlib.sha256(body).hexdigest()
+    meta["sum"] = hashlib.sha256(json.dumps(meta, sort_keys=True).encode("utf-8")).hexdigest()
+    return json.dumps(meta, sort_keys=True).encode("utf-8") + b"\n" + body + b"\n"
+
+
+def _idx_decode(raw, ledger_path):
+    """The state a sidecar claims, or None if it is not a well-formed sidecar of this ledger."""
+    try:
+        head, _, body = raw.partition(b"\n")
+        meta = json.loads(head)
+        sums = meta.pop("sum")
+        if sums != hashlib.sha256(json.dumps(meta, sort_keys=True).encode("utf-8")).hexdigest():
+            return None
+        body = body[:-1] if body.endswith(b"\n") else body
+        if meta.get("psum") != hashlib.sha256(body).hexdigest() or meta.get("v") != IDX_VERSION:
+            return None
+        if meta.get("ledger") != os.path.abspath(str(ledger_path)):
+            return None
+        data = json.loads(body)
+        st = {"id": meta["id"], "off": meta["off"], "n": meta["n"], "cl": meta["cl"], "head": meta["head"],
+              "tail": meta["tail"], "bad": meta["bad"], "segs": meta["segs"],
+              "posts": data["posts"], "asks": data["asks"]}
+        ok = (isinstance(st["id"], list) and len(st["id"]) == 2 and all(type(x) is int for x in st["id"])
+              and all(type(st[k]) is int and st[k] >= 0 for k in ("off", "n", "cl", "bad"))
+              and isinstance(st["head"], str) and isinstance(st["tail"], str) and isinstance(st["segs"], list)
+              and isinstance(st["posts"], dict) and isinstance(st["asks"], dict))
+        if not ok or not 0 <= st["cl"] - len(st["segs"]) * IDX_SEG_LINES < IDX_SEG_LINES:
+            return None  # the segments tile the first len(segs)*IDX_SEG_LINES lines; fewer than one more is open
+        prev = 0
+        for s in st["segs"]:
+            if not (isinstance(s, list) and len(s) == 3 and type(s[0]) is int and type(s[2]) is int
+                    and isinstance(s[1], str) and prev < s[0] <= st["off"]):
+                return None
+            prev = s[0]
+        for d in st["posts"].values():
+            if not isinstance(d, dict) or not all(type(v) is int and 0 <= v <= len(st["segs"]) for v in d.values()):
+                return None
+        for v in st["asks"].values():
+            if not (isinstance(v, list) and len(v) == 2 and v[0] in ("a", "x") and type(v[1]) is int
+                    and 0 <= v[1] < st["off"]):
+                return None
+        return st
+    except Exception:
+        return None
+
+
+def _idx_load(side, ledger_path):
+    try:
+        if side.stat().st_size > IDX_MAX_SIDECAR:
+            return None
+        return _idx_decode(side.read_bytes(), ledger_path)
+    except OSError:
+        return None
+
+
+def _idx_store(side, state, ledger_path):
+    """Atomic: temp file in the same directory, then rename. A failure leaves the old sidecar (or none)."""
+    tmp = side.with_name(side.name + f".{os.getpid()}.tmp")
+    try:
+        side.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(_idx_encode(state, ledger_path))
+        for attempt in range(5):  # Windows: the rename fails while a reader (field-post.py) has the file open
+            try:
+                os.replace(tmp, side)
+                return
+            except PermissionError:
+                time.sleep(0.01)
+    except OSError:
+        pass
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+
+
+def _idx_matches(state, fh, st):
+    """The sidecar describes this file: same identity, not shorter than the offset, same bytes just before it."""
+    if state["id"] != [st.st_dev, st.st_ino] or st.st_size < state["off"]:
+        return False
+    return _idx_tail_digest(fh, state["off"]) == state["tail"]
+
+
+def _idx_region_ok(state, data, start, seg_i, n_start, n_end, lines, digest=None):
+    """The ledger bytes data = ledger[start:start+len(data)] (whole lines) agree with the sidecar: `lines` physical
+    lines, the segment digest (completed segments), and the E5 / ask entries and the first bad piece the sidecar
+    holds for them. Re-derives all of it from the bytes, so a sidecar edited to hide or invent an entry fails."""
+    end = start + len(data)
+    if data.count(b"\n") != lines or (data and not data.endswith(b"\n")):
+        return False
+    if digest is not None and hashlib.sha256(data).hexdigest() != digest:
+        return False
+    der = {"n": n_start, "bad": 0, "head": "", "posts": {}, "asks": {}}
+    pos = 0
+    while pos < len(data):
+        j = data.index(b"\n", pos)
+        _idx_pieces(der, data[pos:j], start + pos, seg_i)
+        pos = j + 1
+    if der["n"] != n_end:
+        return False
+    if der["head"] and der["head"] != state["head"] and end == state["off"]:
+        return False
+    if der["bad"]:
+        if not state["bad"] or state["bad"] > der["bad"]:
+            return False
+    elif n_start < state["bad"] <= n_end:
+        return False
+    for sess, d in der["posts"].items():
+        for path in d:
+            seen = state["posts"].get(sess, {}).get(path)
+            if seen is None or seen > seg_i:
+                return False
+    for sess, d in state["posts"].items():
+        for path, seen in d.items():
+            if seen == seg_i and path not in der["posts"].get(sess, {}):
+                return False
+    for key, (kind, off) in der["asks"].items():
+        got = state["asks"].get(key)
+        if got is None or got[1] < off or (got[1] < end and got != [kind, off]):
+            return False
+    for key, got in state["asks"].items():
+        if start <= got[1] < end and der["asks"].get(key) != got:
+            return False
+    return True
+
+
+def _idx_trusted(state, fh):
+    """Check the sidecar's claims against the ledger: the open segment (every call: it holds the newest, and
+    in practice the only, session writes E5 matters for) and one completed segment chosen at random.
+    Returns the open segment's bytes (the scan hashes on from them) or None if a claim is false."""
+    segs = state["segs"]
+    start, n_start = (segs[-1][0], segs[-1][2]) if segs else (0, 0)
+    fh.seek(start)
+    data = fh.read(state["off"] - start)
+    if len(data) != state["off"] - start:
+        return None
+    if not _idx_region_ok(state, data, start, len(segs), n_start, state["n"], state["cl"] - len(segs) * IDX_SEG_LINES):
+        return None
+    if segs:
+        i = _idx_pick(len(segs))
+        s0, n0 = (segs[i - 1][0], segs[i - 1][2]) if i else (0, 0)
+        fh.seek(s0)
+        seg = fh.read(segs[i][0] - s0)
+        if not _idx_region_ok(state, seg, s0, i, n0, segs[i][2], IDX_SEG_LINES, segs[i][1]):
+            return None
+    return data
+
+
+_VIEW = {}
+
+
+def ledger_view(ledger_path, root=None, deadline=None):
+    """Verified state of the ledger: dict(state, rest) with the complete lines in state and the
+    unterminated tail (if any) folded into `rest`. Reads only what was appended since the last verification
+    unless the sidecar is unusable. Raises what the old whole-file read raised (OSError, UnicodeDecodeError)
+    and LedgerIndexBusy when a full verification cannot finish before `deadline` (a time.monotonic() value)."""
+    ledger_path = pathlib.Path(ledger_path)
+    try:
+        st = ledger_path.stat()
+    except FileNotFoundError:
+        return {"state": _idx_new([0, 0]), "rest": None}
+    ckey = (str(ledger_path), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    if _VIEW.get("key") == ckey:
+        return _VIEW["view"]
+    side = _idx_sidecar(ledger_path, root)
+    ident = [st.st_dev, st.st_ino]
+    with ledger_path.open("rb") as fh:
+        state = _idx_load(side, ledger_path)
+        open_data = b""
+        if state is not None:
+            try:
+                open_data = _idx_trusted(state, fh) if _idx_matches(state, fh, st) else None
+            except ValueError:  # bytes the sidecar vouched for do not decode: do not trust it; the rebuild decides
+                open_data = None
+            if open_data is None:
+                state = None
+        fresh = state is None
+        if fresh:
+            state, open_data = _idx_new(ident), b""
+        start = state["off"]
+        try:
+            rest, rest_off = _idx_scan(fh, state, deadline, open_data)
+        except LedgerIndexBusy:
+            state["tail"] = _idx_tail_digest(fh, state["off"])
+            _idx_store(side, state, ledger_path)
+            raise
+        except BaseException:
+            # The ledger does not verify (invalid UTF-8, ...). Drop the sidecar so that the next call fails the same way
+            # instead of trusting a stale prefix on the calls where the random re-check misses the damage.
+            try:
+                os.unlink(side)
+            except OSError:
+                pass
+            raise
+        state["tail"] = _idx_tail_digest(fh, state["off"])
+        if fresh or state["off"] - start >= IDX_PERSIST_BYTES:
+            _idx_store(side, state, ledger_path)
+    ov = None
+    if rest:
+        ov = {"n": state["n"], "bad": 0, "head": "", "posts": {}, "asks": {}}
+        _idx_pieces(ov, rest, rest_off, len(state["segs"]))
+    view = {"state": state, "rest": ov}
+    _VIEW.clear()
+    _VIEW.update(key=ckey, view=view)
+    return view
+
+
+def session_written_paths(ledger_path, session, root=None, deadline=None):
+    """Path keys this session was allowed to write via a file tool. Raises ValueError on an
+    unreadable record, so the caller fails closed. Same result as the old whole-file scan."""
+    if not isinstance(session, str):  # a non-string session id compares equal to non-string record values
+        return _session_written_paths_full(ledger_path, session)
+    if not pathlib.Path(ledger_path).exists():
+        return set()
+    view = ledger_view(ledger_path, root, deadline)
+    state, ov = view["state"], view["rest"]
+    bad = state["bad"] or (ov["bad"] if ov else 0)
+    if bad:
+        raise ValueError(f"ledger line {bad} is not valid JSON")
+    out = set(state["posts"].get(session, ()))
+    if ov:
+        out.update(ov["posts"].get(session, ()))
+    return out
+
+
+def _session_written_paths_full(ledger_path, session):
+    written = set()
+    if not ledger_path.exists():
+        return written
+    for n, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            raise ValueError(f"ledger line {n} is not valid JSON")
+        if (isinstance(rec, dict) and rec.get("session") == session and rec.get("decision") == "allow"
+                and rec.get("tool") in FILE_TOOLS and isinstance(rec.get("path"), str)):
+            written.add(rec["path"])
+    return written
+
+
+def ledger_find_ask(ledger_path, root, session, tool_use_id):
+    """field-post.py's lookup: 'duplicate', the newest matching ask record, or None, as a newest-first scan of
+    the whole ledger would answer. Uses the sidecar for the verified prefix (read-only; no lock) and scans
+    the bytes after its offset directly; any doubt about the sidecar scans the whole ledger."""
+    ledger_path = pathlib.Path(ledger_path)
+    needle = json.dumps(tool_use_id)[1:-1]
+
+    def judge(piece):
+        if needle not in piece:
+            return None
+        try:
+            rec = json.loads(piece)
+        except ValueError:
+            return None
+        if not isinstance(rec, dict) or rec.get("tool_use_id") != tool_use_id or rec.get("session") != session:
+            return None
+        if rec.get("rule") == EXEC_RULE:
+            return "duplicate"
+        if rec.get("decision") == "ask" and rec.get("rule") == ASK_RULE:
+            return rec
+        return None
+
+    def scan(text):
+        for piece in reversed(text.splitlines()):
+            r = judge(piece)
+            if r is not None:
+                return r
+        return None
+
+    off = 0
+    state = None
+    if isinstance(session, str):
+        state = _idx_load(_idx_sidecar(ledger_path, root), ledger_path)
+        try:
+            with ledger_path.open("rb") as fh:
+                if state is not None and _idx_matches(state, fh, ledger_path.stat()):
+                    off = state["off"]
+                    fh.seek(off)
+                    r = scan(fh.read().decode("utf-8"))
+                    if r is not None:
+                        return r
+                    hit = state["asks"].get(json.dumps([session, tool_use_id]))
+                    if hit is None:
+                        return None
+                    if hit[0] == "x":
+                        return "duplicate"
+                    fh.seek(hit[1])
+                    line = fh.readline().decode("utf-8")
+                    r = scan(line)
+                    if isinstance(r, dict):
+                        return r
+        except (OSError, ValueError):
+            pass
+    return scan(ledger_path.read_text(encoding="utf-8"))  # no usable sidecar, or it lied: the old full scan
+
+
+def _ledger_last_hash(ledger_path):
+    """The "hash" of the last record ("0"*64 for an empty ledger), reading only the end of the file. Raises what
+    the old whole-file read raised for a last record that is not a JSON object with a hash."""
+    size = ledger_path.stat().st_size
+    if size == 0:
+        return "0" * 64
+    chunk = 8192
+    with ledger_path.open("rb") as fh:
+        while True:
+            start = max(0, size - chunk)
+            fh.seek(start)
+            data = fh.read(size - start)
+            if start > 0:
+                j = data.find(b"\n")
+                data = data[j + 1:] if j >= 0 else b""  # begin on a line boundary
+            s = data.decode("utf-8").strip()
+            if s or start == 0:
+                lines = s.splitlines()
+                return json.loads(lines[-1])["hash"] if lines else "0" * 64
+            chunk *= 2
+
+
 def ledger_append(ledger_path, record):
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     if not ledger_path.exists():
         # New ledgers are owner-only on POSIX (no-op on Windows). Existing files are left as they are.
         os.close(os.open(str(ledger_path), os.O_CREAT | os.O_WRONLY, 0o600))
-    prev = "0" * 64
-    if ledger_path.exists():
-        lines = ledger_path.read_text(encoding="utf-8").strip().splitlines()
-        if lines:
-            prev = json.loads(lines[-1])["hash"]
+    prev = _ledger_last_hash(ledger_path)
     record["prev_hash"] = prev
     body = json.dumps(record, sort_keys=True)
     record["hash"] = hashlib.sha256((prev + body).encode()).hexdigest()
@@ -1394,7 +1817,9 @@ def enforce(inp, manifest, root, ledger_path, store_source):
             except re.error:
                 deny(ledger_path, event, "E0", "invalid session_written_exec_allow pattern; fail-closed")
             try:
-                written = session_written_paths(ledger_path, session)
+                written = session_written_paths(ledger_path, session, root, _T0 + TIME_BUDGET_S)
+            except LedgerIndexBusy as exc:
+                deny(ledger_path, event, "E0", f"{exc}; denied, fail-closed")
             except (OSError, ValueError) as exc:
                 deny(ledger_path, event, "E0", f"ledger unreadable for E5 ({exc.__class__.__name__}); fail-closed")
             try:
@@ -1431,6 +1856,12 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         if n > budget:
             deny(ledger_path, event, "E4", f"session tool-call budget {budget} exceeded (call #{n})")
 
+    # The old ledger_append read the whole ledger before every append, so a ledger that was not valid UTF-8 denied
+    # every call that would have been allowed. ledger_view keeps that, reading only what was appended since.
+    try:
+        ledger_view(ledger_path, root, _T0 + TIME_BUDGET_S)
+    except LedgerIndexBusy as exc:
+        deny(ledger_path, event, "E0", f"{exc}; denied, fail-closed")
     if e3_pending and e3_pending[0] == "ask":
         emit_ask(ledger_path, event, "E3-policy", e3_pending[1])
     if e3_pending:  # allow_with_ledger

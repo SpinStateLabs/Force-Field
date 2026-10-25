@@ -8,6 +8,33 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## [Unreleased]
 
+### Fixed (gate: per-call ledger work is O(new events), not O(all events); behaviour-preserving, not yet released, no version bump)
+
+The gate read the **whole** ledger on every call, so a call cost about 14 us per ledger line and grew without limit; a hook that runs past its 10 s timeout is **allowed** by Claude Code (fails open). Measured here (CPU seconds per gate call, `Bash ls`, E5 on, synthetic 390-byte records, CPU time because the dev machine was saturated by other work and wall time was not stable): 100 000 lines 1.66 (Windows, Python 3.12) / 2.21 (WSL), 300 000 lines 4.44 / 7.26 (WSL p95 10.1, over the timeout), 1 000 000 lines 14.8 / 30.1. A review had measured 6.6 to 7.9 s wall at 300 000 lines.
+
+What read the ledger (the premise that the gate verifies the hash chain on every call was not correct; `verify-ledger.py` does that, offline, and still reads the whole file):
+
+1. `ledger_append` read the whole file to take the last record's hash (every call, including every deny).
+2. E5 `session_written_exec: deny` parsed every line to build the set of paths a session wrote (every shell call).
+3. `field-post.py` scanned the whole ledger, newest first, on every PostToolUse to look for the call's ask (most calls have none, so it read to the start).
+
+Now:
+
+- `ledger_append` reads only the end of the file (`_ledger_last_hash`).
+- A sidecar `.claude/state/field-ledger-<hash of the ledger path>.idx` (inside the E2-protected state directory; atomic temp-file + rename) records how far the ledger was verified: byte offset, line counts, a digest of the 4 KiB before the offset, file identity, per-512-line segment digests, the E5 write-set by session, and the asks. Each call verifies only the bytes after the offset (strict UTF-8, every line JSON) plus the open segment (re-derived from the ledger bytes every call) plus one random completed segment (re-hashed and re-derived). Persisted every 128 KiB of new ledger; at most that much is re-read per call.
+- Anything wrong with the sidecar (missing, unparseable, bad checksum, wrong version or ledger, other file identity, file shorter than the offset, tail digest changed, a re-derived segment disagrees) discards it and verifies from byte 0, which is what the old code did on every call. A ledger that does not verify (invalid UTF-8) drops the sidecar and keeps denying, as before. The sidecar never turns a deny into an allow.
+- `field-post.py` finds the ask through the same sidecar (read-only, no lock) plus a direct scan of the bytes after its offset; any doubt scans the whole ledger as before.
+- Measured after (CPU s per gate call, median, steady state): 100 000 lines 0.22 (Windows) / 0.28 (WSL); 300 000 lines 0.25 / 0.42; 1 000 000 lines 0.38 / 0.51. Post hook at 1 000 000 lines: 3.19 to 0.28 (Windows), 5.75 to 0.28 (WSL). The first call after the sidecar is deleted (or the first after upgrading) pays one full verification, as every call used to: 100 000 lines 2.1 / 3.3 s; at 300 000 lines and above it does not fit the 5 s budget (see below).
+
+Changes in observable behaviour (all in the deny direction or on a corrupt ledger; list is complete):
+
+- **A full verification that cannot finish inside the 5 s gate budget saves its progress and denies E0 ("ledger index is being rebuilt ... the next call continues")** instead of running into the 10 s hook timeout, which allows. It only happens when the sidecar is absent or unusable and the ledger is large: the first call after upgrading with a 300 000 line ledger on a loaded machine denied 1 to 2 calls (3 on WSL, 6 at 1 000 000 lines) before it caught up. The old gate would have been allowed after a 4 to 7 s call, or allowed by timeout.
+- A ledger line that is invalid UTF-8 still denies every call (as before). Damage inside a completed segment is noticed when the random segment re-check draws it (expected within number-of-segments calls: about 600 at 300 000 lines) and then denies every call until the ledger is repaired; the old gate noticed at once. See the README limits.
+- `field-post.py` no longer decodes the part of the ledger the sidecar covers, so invalid UTF-8 there no longer makes it raise (it is an evidence-only, fail-open hook). Its answers are otherwise identical (differential test).
+- A deny record is now written even when an earlier part of the ledger is unreadable (it needs only the last line); the allow path still refuses to run on such a ledger.
+
+Tests: `hooks/test/test_ledger_index.py` (run by `run_ledger_index.sh`, added to `run_all.sh`): the old implementation is kept in the file as an oracle; 24 random ledgers x 12 random append/tamper steps (junk and partial lines, invalid UTF-8, BOM, CRLF, raw U+2028 / form feed, deleted and flipped middle bytes, truncation, replaced file) compare `session_written_paths`, the previous-hash step of `ledger_append` and `field-post`'s find with the old code (same value, or the same exception class and, for ValueError, the same message); 9 ways to delete or corrupt the sidecar; forged offsets, identities, checksums, emptied or invented entries; a complexity test (pieces parsed per call at 3 000 and 60 000 lines); the time-budget path; 4 processes under the gate lock plus a lock-free reader; whole-gate checks that E5 and E2 still deny with a good, deleted and garbage sidecar. Mutation run of the guards: see the PR description.
+
 ### Fixed (gate, ADR-0080; not yet released, no version bump)
 
 - **field-gate.py resolves symlinks and junctions on Windows.** `_abs_norm` and `_root_norm` called `realpath` only off Windows, so a link already in the project that pointed at `.claude/state` or the manifest hid the target from E2, and a file written through a link was a different file to E5. On Windows (`os.name == "nt"`) the path and the root are now resolved with `_win_real`: `..` collapsed first (as Win32 does), then `os.path.realpath(strict=True)` on the longest existing prefix with the rest appended. Tested here on Python 3.14.2 and in CI on 3.12.10: it resolves `mklink /J` junctions, `mklink /D` symlinks and 8.3 short names.

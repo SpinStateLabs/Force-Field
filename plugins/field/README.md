@@ -168,6 +168,19 @@ caught, and paths resolve against the project root rather than the shell's worki
 fails open. `/field audit` produces an audit-ready report; independent certification is a separate
 service.
 
+### The ledger index (what a call reads, and what remains Declared)
+
+A gate call reads only the end of the ledger plus what was appended since the last call; `.claude/state/field-ledger-<hash>.idx` (inside the E2-protected state directory) remembers how far it verified. It is a cache, never a source of allows: a missing, damaged, foreign or stale sidecar is ignored and the whole ledger is verified from byte 0 (strict UTF-8, every line JSON, as before). Verification that cannot finish inside the 5 s budget saves its progress and denies E0 until it has caught up, instead of running into the 10 s hook timeout, which fails open.
+
+What this does not do, stated precisely:
+
+- The per-call check is not the hash chain. The gate never verified the chain on a call and still does not (`/field verify` does, offline). The chain is unkeyed.
+- Someone who can write the **sidecar but not the ledger** can make E5 miss a file this session wrote only by emptying an entry from a completed segment, and only until the random re-check draws that segment: one completed segment (512 lines) is re-hashed and re-derived per call, so the expected time is the number of segments (about 600 calls at 300 000 lines, 2 000 at 1 000 000). The newest 512 lines (the open segment) are re-derived on every call, so a write made recently is not hideable. Forged offsets, identities, checksums, segment tilings and emptied sidecars are refused.
+- Someone who can rewrite **the ledger and the sidecar consistently** is not detected. That was already true of the ledger alone (no key, no chain check per call). E2 denies the agent's own tools every write to both; keep write access to `.claude/state/` away from the agent.
+- Damage in the middle of the ledger (an edit, a bad byte) that leaves the last 4 KiB before the recorded offset intact is noticed when the random segment re-check draws it, not at once. The old gate noticed any invalid UTF-8 at once.
+- The first call after upgrading (or after the sidecar is deleted) on a ledger too large for the budget (about 200 000 lines on a 2024 laptop) denies a few times before it catches up.
+- `verify-ledger.py` still reads the whole file; so does the counter file's per-session map, which grows with the number of sessions, not calls.
+
 ### Known-bypass register (E2 and E5 are text-scanning controls, not a sandbox)
 
 Windows path handling (ADR-0080) resolves symlinks, junctions and 8.3 short names, strips `\\?\` prefixes, NTFS streams and trailing dots, and refuses (E0) any path it cannot map to a drive letter: UNC and admin-share (`\\localhost\C$\...`, `//localhost/C$/...`), `\\?\Volume{GUID}\`, `\\?\GLOBALROOT\Device\...`, `\\.\` device paths and drive-relative `C:x`. Local admin-share access is denied by design; a project that itself lives on a UNC share keeps working because paths under the identically cleaned root are allowed. Not covered, and not fixable by this mechanism:
