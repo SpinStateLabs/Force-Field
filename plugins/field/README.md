@@ -152,14 +152,24 @@ governance changes are made by the human, outside the session.
 When the gate hook itself fails (ADR-0081, not yet released): `hooks.json` sets `"onFailure": "block"` on the gate. On Claude Code
 2.1.295 and later a gate hook that times out (10 s) BLOCKS the tool call (Enforced; measured on Claude Code 2.1.308 on Windows 10 with
 Git Bash, 2026-10-25: a stand-in gate that sleeps past the timeout was blocked, reason `timed out; blocking because onFailure is "block"`,
-10.8 s after the hook started, and the command did not run). A gate hook that crashes, cannot start or prints invalid JSON is blocked by
-the same documented setting (Declared: only the timeout was run). On versions before 2.1.295 the key is ignored and such failures let the
-call through (Declared: no older build was run). Plugin users should check `claude --version`. On Windows without Git Bash the behaviour
-differs before 2.1.310 (2.1.299, 2.1.309 and 2.1.310 each changed when such a hook fails open; on 2.1.308 with Git Bash not detected a
-timed-out gate was blocked with or without the key, measured). Not measured: that 2.1.308 with Git Bash lets a timed-out gate through
-when the key is absent (the Claude Code docs say it does). Because the hook cannot report "no manifest" when it never answers, a stalled
-gate now stops tool use in every project where the plugin is enabled, governed or not, until it recovers. The live check is
-`hooks/test/run_timeout_live.sh` (needs a logged-in `claude`; three model calls; not in CI).
+10.8 s after the hook started, and the command did not run; the independent review reproduced it, two blocked calls in one run). Control, measured on the same
+build with Git Bash: without the key the timed-out gate let the call through (its result came 23.4 s after the call, about 10 s after the
+hook was cancelled; why it waited is unverified). A gate hook that crashes, cannot start or prints invalid JSON is blocked by the same
+documented setting (Declared: only the timeout was run). `plugin.json` declares no minimum Claude Code version: on versions before 2.1.295
+the key is expected to be ignored, so such failures let the call through as before (Declared: no older build was run). Plugin users should
+check `claude --version`. On Windows without Git Bash the behaviour differs before 2.1.310 (2.1.299, 2.1.309 and 2.1.310 each changed when
+such a hook fails open; on 2.1.308 with Git Bash not detected a timed-out gate was blocked with or without the key, measured). Linux and
+macOS were not run. Because the hook cannot report "no manifest" when it never answers, a stalled gate now stops tool use in every project
+where the plugin is enabled, governed or not, until it recovers. A very large ledger or a queue of parallel calls on the gate's lock can
+also reach the 10 s timeout, because the gate's own 5 s budget starts after the lock and the whole-ledger reads are outside it (PR #16
+reduces the ledger part); such a call is now blocked with Claude Code's notice instead of an E0 reason.
+
+If every tool call is blocked with `... field-gate.sh"]: timed out; blocking because onFailure is "block"`, act in a terminal (the agent
+cannot, its calls are the ones blocked): check that `sh -c 'echo ok'` and `python3 -c 'import yaml'` (or `py -3`, `python`) start; on
+Windows with Git for Windows in a non-standard place set `CLAUDE_CODE_GIT_BASH_PATH` to its `bash.exe` and start a new session. To get
+working at once, `claude plugin disable field@force-field` (then a new session), `--bare` (API-key auth only, not a claude.ai login), or
+`disableAllHooks: true` turn the gate off entirely, which leaves governed projects unprotected until it is re-enabled. The live check is `hooks/test/run_timeout_live.sh` (needs a
+logged-in `claude`; three `claude -p` invocations of up to 2 turns each, case A may end with `error_max_turns`; not in CI).
 
 ## Limitations
 

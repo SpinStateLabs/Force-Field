@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # LIVE test (ADR-0081): a gate hook that times out BLOCKS the tool call on a real Claude Code build.
 #   bash hooks/test/run_timeout_live.sh
-# NOT in run_all.sh or CI: it needs a logged-in `claude` (2.1.295 or later) and makes three model calls (`claude -p`,
-# each up to --max-turns 2). Without a usable claude it prints SKIP with the reason and exits 0.
+# NOT in run_all.sh or CI: it needs a logged-in `claude` (2.1.295 or later) and makes three `claude -p` invocations,
+# one per case, each of up to 2 turns (--max-turns 2); case A may end with error_max_turns when the model retries
+# after the block. Without a usable claude it prints SKIP with the reason and exits 0.
 #
 # Each case runs `claude -p --plugin-dir <dir>` from a fresh, empty project directory (no field-manifest.yaml, so an
 # installed copy of the gate, if the user has one, finds no manifest and allows; it cannot block or mask a case):
@@ -22,7 +23,8 @@
 # login is read from claude's own config, not the env).
 # Transcripts (stream-json, each line prefixed with its arrival time) are saved under $FIELD_LIVE_OUT (default: a new
 # temporary directory), never in the repository. Only assertion lines and timings are printed.
-# Optional: FIELD_LIVE_MODEL (default sonnet), FIELD_LIVE_CASES (default "A B C"; one model call per case).
+# Each case also asserts, from the run's init event, that an installed field@force-field is not loaded.
+# Optional: FIELD_LIVE_MODEL (default sonnet), FIELD_LIVE_CASES (default "A B C"; one `claude -p` invocation per case).
 set -u
 LC_NUMERIC=C   # EPOCHREALTIME with a '.' decimal point (not exported: the child keeps the caller's locale)
 cd "$(dirname "$0")"
@@ -113,7 +115,7 @@ check() {
 import json, re, sys
 case, path, marker = sys.argv[1:4]
 SHELL_TOOLS = ("Bash", "PowerShell")
-uses, results, hooks, final, no_git_bash = {}, [], [], None, False
+uses, results, hooks, final, no_git_bash, init_plugins = {}, [], [], None, False, None
 for raw in open(path, encoding="utf-8", errors="replace"):
     ts, _, line = raw.rstrip("\n").partition("\t")
     try:
@@ -138,6 +140,8 @@ for raw in open(path, encoding="utf-8", errors="replace"):
         hooks.append(ev)
     if t == "system" and "Git Bash wasn't found" in str(ev.get("content", "")):
         no_git_bash = True
+    if t == "system" and ev.get("subtype") == "init":
+        init_plugins = [str(p.get("source") or p.get("name")) if isinstance(p, dict) else str(p) for p in ev.get("plugins") or []]
 shell = [(uid, err, text, ts) for uid, err, text, ts in results if uses.get(uid, ("",))[0] in SHELL_TOOLS]
 ran = [r for r in shell if any(l.strip() == "FIELD-LIVE-OK" for l in r[2].splitlines())]
 starts = []
@@ -162,6 +166,9 @@ for uid, err, text, ts in shell:
     stub = [s for s in starts if t_use - 1 <= s <= ts]
     extra = ("; stub started +%.1f s after the tool_use, the result came %.1f s after the stub started" % (stub[0] - t_use, ts - stub[0])) if stub else ""
     print("      %s: %s call wall time %.1f s (tool_use line to tool_result line), is_error=%s%s" % (case, uses[uid][0], ts - t_use, err, extra))
+line(init_plugins is not None and "field@force-field" not in init_plugins,
+     "the init event does not list the installed field@force-field (it cannot block or mask this case; %s)"
+     % ("no init event" if init_plugins is None else "%d plugin entries" % len(init_plugins)))
 if marker != "-":
     line(len(starts) >= 1, "the stub gate hook ran (%d start line(s) in its marker)" % len(starts))
 if case == "A":
