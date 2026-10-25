@@ -351,4 +351,114 @@ if os.name == "nt":
 else:
     print("N/A  dangling-link spelling cases: Windows only")
 
+# ---- 7. PR 15: colon-bound PowerShell parameters, the state-dir rule after a parameter prefix, a:b:c ----
+check("ps_tokens: -Path:x yields the value as a token", True, "x/y" in g.ps_tokens("Set-Content -Path:x/y -Value v"))
+check("ps_tokens: -LiteralPath:'a b' yields the unquoted value", True, "a b" in g.ps_tokens("Set-Content -LiteralPath:'a b' -Value v"))
+check("ps_tokens: http://h:80/a is not split", False, any(tk == "//h:80/a" or tk == "80/a" for tk in g.ps_tokens("curl http://h:80/a")))
+sd = tempfile.mkdtemp(prefix="canon_sd_")
+rules = g.state_dir_rules(".claude/state/KILL", sd)
+for word in (".claude/state/x", "-Path:.claude/state/x", "-LiteralPath:.claude/state/x"):
+    check("state_dir_rules match %s" % word, True, any(re.search(rx, word) for rx, _l in rules))
+check("state_dir_rules do not match -Path:other/x", False, any(re.search(rx, "-Path:other/x") for rx, _l in rules))
+shutil.rmtree(sd, ignore_errors=True)
+if os.name == "nt":
+    free = [c for c in "qrstuvwxyz" if not os.path.exists(c + ":/")]
+    if free:
+        w = free[0] + ":b:c"
+        try:
+            g._abs_norm(w, "C:/proj")
+            got = "no error"
+        except g.UnresolvablePath:
+            got = "E0"
+        check("_abs_norm: %s (no such drive) is not E0" % w, "no error", got)
+    try:
+        g._abs_norm("C:foo", "C:/proj")
+        got = "no error"
+    except g.UnresolvablePath:
+        got = "E0"
+    check("_abs_norm: C:foo (drive-relative on an existing drive) is still E0", "E0", got)
+else:
+    print("N/A  a:b:c drive-relative cases: Windows only")
+
+# ---- 8. PR 15 review: path-valued parameters only, each state-dir rule on its own, the empty word ----
+check("ps_tokens: -Pattern:a:b is data, not split", False, "a:b" in g.ps_tokens("Select-String -Pattern:a:b"))
+check("ps_tokens: -Format:H:mm is data, not split", False, "H:mm" in g.ps_tokens("Get-Date -Format:H:mm"))
+check("ps_tokens: -Value:x:y is data, not split", False, "x:y" in g.ps_tokens("Set-Content -Value:x:y"))
+check("ps_tokens: -Dest:x (unique prefix of -Destination) is split", True, "x/y" in g.ps_tokens("Copy-Item a -Dest:x/y"))
+check("ps_tokens: -Name:n is split", True, "n.txt" in g.ps_tokens("New-Item -Name:n.txt"))
+sd2 = tempfile.mkdtemp(prefix="canon_sd2_")
+abs_rule, rel_rule = g.state_dir_rules(".claude/state/KILL", sd2)
+abs_state = g._abs_norm(".claude/state", sd2)[0]
+check("absolute state-dir rule matches -Path:<abs state>/x", True, bool(re.search(abs_rule[0], "-Path:" + abs_state + "/x")))
+check("relative state-dir rule matches -Path:.claude/state/x", True, bool(re.search(rel_rule[0], "-Path:.claude/state/x")))
+check("relative state-dir rule still skips field.json", False, bool(re.search(rel_rule[0], "-Path:.claude/state/field.json")))
+shutil.rmtree(sd2, ignore_errors=True)
+
+# ---- 9. PR 15 second review ----
+check("ps_tokens: -P:x (one letter) is not split", False, "x/y" in g.ps_tokens("Set-Content -P:x/y -Value v"))
+check("ps_tokens: -Pa:x/y (two letters, a prefix of -Path) is split", True, "x/y" in g.ps_tokens("Set-Content -Pa:x/y -Value v"))
+check("cmd_payload: /c glued to the quote", "echo x > f", g.cmd_payload(["/cecho x > f"]))
+check("cmd_payload: //K upper case, after other switches", "echo x", g.cmd_payload(["/d", "/s", "//K", "echo", "x"]))
+check("cmd_payload: no switch, no payload", None, g.cmd_payload(["/d", "dir"]))
+check("_cmd_line: ^ and quotes removed, rd read as rmdir", "rmdir field-manifest.yaml", " ".join(g._cmd_line('rd"field-m^anifest.yaml"').split()))
+if os.name == "nt":
+    have = [c for c in "cdef" if os.path.exists(c + ":/")]
+    try:
+        g._abs_norm(have[0] + ":b:c", "C:/proj")
+        got = "no error"
+    except g.UnresolvablePath:
+        got = "E0"
+    check("_abs_norm: %s:b:c on a mounted drive is still E0" % have[0], "E0", got)
+
+# ---- 10. PR 15 third review: bundled switches, the nesting cap of the wipe check ----
+check("cmd_payload: /d/c bundled", "echo x", g.cmd_payload(["/d/c", "echo", "x"]))
+check("cmd_payload: /s/c glued to the text", "echo x", g.cmd_payload(["/s/cecho x"]))
+check("cmd_payload: /v:on/c bundled", "echo x", g.cmd_payload(["/v:on/c", "echo x"]))
+wroot = tempfile.mkdtemp(prefix="canon_wipe_")
+os.makedirs(os.path.join(wroot, ".claude"))
+for depth, want in ((0, True), (2, True), (3, True)):  # beyond the cap a removal or protected word is denied (fail closed)
+    check("dir_wipe_target: bash -c payload followed at depth %d: %s" % (depth, want), want,
+          g.dir_wipe_target("bash -c 'rm -r .claude'", wroot, (), depth) is not None)
+    check("dir_wipe_target: cmd /c payload followed at depth %d: %s" % (depth, want), want,
+          g.dir_wipe_target('cmd /c "rd /s /q .claude"', wroot, (), depth) is not None)
+check("dir_wipe_target: a harmless payload beyond the cap is allowed (bash)", None, g.dir_wipe_target("bash -c 'echo hi'", wroot, (), 3))
+check("dir_wipe_target: a harmless payload beyond the cap is allowed (cmd)", None, g.dir_wipe_target('cmd /c "echo hi"', wroot, (), 3))
+check("dir_wipe_target: mv x . moves x, it removes nothing", None, g.dir_wipe_target("mv other/a.txt .", wroot, (), 0))
+check("dir_wipe_target: mv .claude x does", True, g.dir_wipe_target("mv .claude x", wroot, (), 0) is not None)
+p3, g3 = g.bash_e2_words("cmd /c del field-manifest.*", wroot, lambda w: False, 3)
+check("bash_e2_words beyond the cap: the rest still gives its glob and words", True, "field-manifest.*" in g3 and "field-manifest.*" in p3)
+p4, g4 = g.bash_e2_words("cmd /c echo hi", wroot, lambda w: False, 3)
+check("bash_e2_words beyond the cap: a harmless rest gives no glob", [], g4)
+# every alternative of the fail-closed word list must matter beyond the nesting cap
+for word in ("rm x", "rmdir x", "rd x", "del x", "erase x", "unlink x", "shred x", "mv a b", "move a b", "ren a b", "rename a b",
+             "Remove-Item x", "ri x", "robocopy a b", "format c:", "find . -delete", "cat field-manifest.yaml", "cat hooks.json",
+             "cat .claude/x", "cat settings.json", "cat settings.local.json", "cat ESTATE_KILL", "cat field-ledger.jsonl"):
+    check("beyond the cap, %r is risky" % word, True, g._risky(word))
+    check("beyond the cap, bash -c %r is denied" % word, True, g.dir_wipe_target("bash -c '%s'" % word, wroot, (), 3) is not None)
+check("beyond the cap, harmless words are not risky", False, g._risky("echo hi; ls -la; git status; cat README.md; formatted"))
+check("_value_forms: a URL is one piece", ["https://h/p?a=1&b=2"], g._value_forms("https://h/p?a=1&b=2"))
+check("_value_forms: a:b lists still split", True, "/usr/x" in g._value_forms("PATH=a:/usr/x") or "/usr/x" in g._value_forms("a:/usr/x"))
+check("ps_as_bash: (( )) @( ) $( ) and { } are command position", True,
+      all(" ; cmd" in g.ps_as_bash(s) for s in ('((cmd /c x))', '@(cmd /c x)', '$(cmd /c x)', '{cmd /c x}', '@(@(cmd /c x))')))
+check("ps_as_bash: an escaped quote survives", True, chr(92) + chr(34) in g.ps_as_bash('pwsh -c "a ' + chr(92) + chr(34) + 'b' + chr(92) + chr(34) + '"'))
+check("unreadable_input: iex of a string naming a removal", True, g.unreadable_input("iex 'rd /s /q x'") is not None)
+check("unreadable_input: [scriptblock]::Create of a removal", True, g.unreadable_input("$sb = [scriptblock]::Create('rd /s /q x'); $sb.Invoke()") is not None)
+check("unreadable_input: iex of a harmless string", None, g.unreadable_input("iex 'Get-Date'"))
+check("unreadable_input: & (string) naming a protected file", True, g.unreadable_input("& ('cat ' + 'field-manifest.yaml')") is not None)
+check("unreadable_input: & { block } is analysable", None, g.unreadable_input("& { Get-Date }"))
+check("unreadable_input: cmd < script.bat", True, g.unreadable_input("cmd < script.bat") is not None)
+check("unreadable_input: cmd < /dev/null is fine", None, g.unreadable_input("cmd < /dev/null"))
+check("unreadable_input: powershell -enc", True, g.unreadable_input("powershell -NoProfile -enc AAAA") is not None)
+check("unreadable_input: powershell -Command is fine", None, g.unreadable_input("powershell -Command dir"))
+if os.name == "nt":
+    for w in ("q:b", '"q:b"'.strip('"'), "q:b:c"):
+        try:
+            g._abs_norm(w, "C:/proj")
+            got = "no error"
+        except g.UnresolvablePath:
+            got = "E0"
+        check("_abs_norm: %s (no such drive) is not E0" % w, "no error", got)
+check("dir_wipe_target: bash -c 'rm -r node_modules' is no wipe", None, g.dir_wipe_target("bash -c 'rm -r node_modules'", wroot, (), 0))
+shutil.rmtree(wroot, ignore_errors=True)
+
 sys.exit(1 if fail else 0)

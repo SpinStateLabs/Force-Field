@@ -161,6 +161,8 @@ jobs:
         run: bash plugins/field/hooks/test/run_post_hook.sh
       - name: Link tests (symlinks, ADR-0080)
         run: bash plugins/field/hooks/test/run_links.sh
+      - name: Shell-form tests (cmd /c, colon-bound parameters, link globs; PR 15)
+        run: bash plugins/field/hooks/test/run_shell_forms.sh
 
   # ADR-0080: the gate runs on Windows (Git Bash, as Claude Code runs hooks there) and must resolve junctions and
   # symlinks, strip extended-length prefixes and NTFS streams, and see 8.3 names. run_all.sh runs every suite, fails
