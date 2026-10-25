@@ -18,12 +18,16 @@ ran under a permission_mode other than "default" is marked as NOT a human approv
 
 Finding the ask: the newest ledger record for the tool_use_id. The ledger stays the only store of record. The
 gate keeps a sidecar index of its asks in the state directory (see field-gate.py, ledger_view); this hook reads
-it without the lock, scans only the ledger bytes after the index's offset, and uses the index for the rest. If
-the sidecar is missing or does not match the ledger (identity, length, bytes before its offset) it scans the whole
-ledger newest first, as before. Cost: O(records appended since the gate last saved the index) instead of one
-read of the whole ledger per PostToolUse. A forged sidecar can hide an ask from this hook (no record is
-written); it cannot make the hook write a record for a call that has no ask. A non-ask call is found absent
-without taking the lock.
+it without the lock, scans only the ledger bytes after the index's offset, and uses the index for the rest. It
+trusts the sidecar exactly when the gate does: it must match the ledger (identity, length, bytes before its offset)
+and its claims must re-derive from the ledger (the open segment, the newest 512 lines, every time, plus the gate's
+random sample of completed segments). Otherwise it scans the whole ledger newest first, as before. It never
+writes the sidecar (only the gate does, under its lock). A hit in the index, ask or executed record, is confirmed
+by reading the ledger line it names. Cost: O(records appended since the gate last saved the index, plus the
+sampled segments) instead of one read of the whole ledger per PostToolUse. What a forged sidecar can still do:
+hide an ask that sits in a completed segment the check did not re-derive on this call (no record is written; the
+same window the gate's E5 has, see the README); it cannot make the hook write a record for a call that has no ask.
+A non-ask call is found absent without taking the lock.
 
 Fields read from the hook input: hook_event_name, session_id, tool_use_id, permission_mode, cwd. Nothing else
 (tool_input and tool_response are not read, so no tool output reaches the ledger).

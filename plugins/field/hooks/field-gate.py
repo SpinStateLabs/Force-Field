@@ -69,6 +69,7 @@ import datetime
 import fnmatch
 import hashlib
 import json
+import math
 import os
 import pathlib
 import ntpath
@@ -652,12 +653,15 @@ def exec_suspect_tokens(cmd, depth=0, root=None, written=None):
 # A sidecar in the protected state directory remembers how far the ledger was verified. It is only a cache:
 #   - missing, unparseable, wrong checksum/version/ledger, other file identity, file shorter than the offset,
 #     or tail bytes before the offset changed: ignored, the whole ledger is verified from byte 0;
-#   - each call re-hashes one random completed segment (and re-derives its E5/ask entries) and compares
-#     with the sidecar; a mismatch discards the sidecar and verifies from byte 0.
+#   - each call re-hashes k random completed segments (k grows with the ledger, bounded: see _idx_sample) and
+#     re-derives the E5/ask entries of the first of them, and compares with the sidecar; a mismatch discards
+#     the sidecar and verifies from byte 0.
 # A full verification that cannot finish inside the time budget persists its progress and denies E0
 # ("being rebuilt"; the next call continues), instead of running into the hook timeout, which allows the call.
 IDX_VERSION = 1
-IDX_SEG_LINES = 512           # physical lines per checkpoint segment (one is re-checked per call: ~9 ms)
+IDX_SEG_LINES = 512           # physical lines per checkpoint segment (re-derive one: ~10 ms; re-hash one: ~1.2 ms)
+IDX_CHECK_MIN = 4             # completed segments re-hashed per call: at least this many (all of them if fewer) ...
+IDX_CHECK_MAX = 32            # ... and at most this many, so the extra work per call is bounded (see _idx_sample)
 IDX_TAIL = 4096               # bytes before the offset whose digest binds the sidecar to the ledger
 IDX_PERSIST_BYTES = 128 * 1024  # persist the sidecar once this much new ledger was scanned (or after a rebuild)
 IDX_MAX_SIDECAR = 256 * 1024 * 1024
@@ -672,6 +676,38 @@ class LedgerIndexBusy(RuntimeError):
 def _idx_pick(n):
     """Which completed segment to re-check on this call (0 <= result < n). A test patches this."""
     return int.from_bytes(os.urandom(4), "big") % n
+
+
+def _idx_sample(n):
+    """The completed segments (of n) to re-check on this call: k distinct indices, the first one drawn by _idx_pick.
+
+        k = min(n, max(IDX_CHECK_MIN, ceil(sqrt(n))), IDX_CHECK_MAX)
+
+    Every one of the k is re-hashed (its digest and line count against the sidecar); the first is also re-derived
+    (its E5 / ask entries), as the single random segment was before. A changed byte inside a completed segment
+    (an edit, a deleted line, invalid UTF-8, a line that is no longer JSON) changes that segment's digest, so it is
+    noticed on the first call that draws it, and then the whole ledger is verified from byte 0.
+    Detection: the k are distinct and uniform (rejection sampling over _idx_pick), drawn afresh on every call, so a
+    call misses one damaged segment with probability 1 - k/n, and c calls in a row miss it with probability
+    (1 - k/n)^c; the expected number of calls to notice it is n/k. With 512-line segments: 300 000 lines,
+    n = 585, k = 25: n/k = 23.4 calls, 99 % within 106 (one segment per call, as before: 585 and 2 692);
+    1 000 000 lines, n = 1 953, k = 32: n/k = 61, 99 % within 279 (one: 1 953 and 8 992). n <= IDX_CHECK_MIN:
+    every segment, every call. Cost: one re-derivation (~10 ms) plus at most IDX_CHECK_MAX - 1 re-hashes (~1.2 ms
+    each, ~37 ms) per call, measured on 400-byte records; a constant, so a call stays O(new events + k * segment).
+    A test that patches _idx_pick to a constant gets that one segment (the draws repeat, so no second distinct
+    index is found within the attempt bound); the other tests rely on that."""
+    picks = [_idx_pick(n)]
+    k = min(n, max(IDX_CHECK_MIN, math.isqrt(n - 1) + 1), IDX_CHECK_MAX)
+    if k == n:
+        return picks + [i for i in range(n) if i != picks[0]]
+    for _ in range(8 * k):  # k < n here: expected draws are at most 1.61 k (computed for n < 5000); the bound
+        # only stops a patched, non-random _idx_pick
+        if len(picks) == k:
+            break
+        i = _idx_pick(n)
+        if i not in picks:
+            picks.append(i)
+    return picks
 
 
 def _idx_sidecar(ledger_path, root):
@@ -891,8 +927,9 @@ def _idx_region_ok(state, data, start, seg_i, n_start, n_end, lines, digest=None
 
 def _idx_trusted(state, fh):
     """Check the sidecar's claims against the ledger: the open segment (every call: it holds the newest, and
-    in practice the only, session writes E5 matters for) and one completed segment chosen at random.
-    Returns the open segment's bytes (the scan hashes on from them) or None if a claim is false."""
+    in practice the only, session writes E5 matters for) and k completed segments chosen at random (_idx_sample):
+    all k re-hashed, the first also re-derived. Returns the open segment's bytes (the scan hashes on from them)
+    or None if a claim is false."""
     segs = state["segs"]
     start, n_start = (segs[-1][0], segs[-1][2]) if segs else (0, 0)
     fh.seek(start)
@@ -901,13 +938,15 @@ def _idx_trusted(state, fh):
         return None
     if not _idx_region_ok(state, data, start, len(segs), n_start, state["n"], state["cl"] - len(segs) * IDX_SEG_LINES):
         return None
-    if segs:
-        i = _idx_pick(len(segs))
+    for j, i in enumerate(_idx_sample(len(segs)) if segs else ()):
         s0, n0 = (segs[i - 1][0], segs[i - 1][2]) if i else (0, 0)
         fh.seek(s0)
         seg = fh.read(segs[i][0] - s0)
-        if not _idx_region_ok(state, seg, s0, i, n0, segs[i][2], IDX_SEG_LINES, segs[i][1]):
-            return None
+        if j == 0:
+            if not _idx_region_ok(state, seg, s0, i, n0, segs[i][2], IDX_SEG_LINES, segs[i][1]):
+                return None
+        elif seg.count(b"\n") != IDX_SEG_LINES or hashlib.sha256(seg).hexdigest() != segs[i][1]:
+            return None  # the bytes the sidecar indexed changed: everything it derived from them is in doubt
     return data
 
 
@@ -1008,7 +1047,11 @@ def _session_written_paths_full(ledger_path, session):
 def ledger_find_ask(ledger_path, root, session, tool_use_id):
     """field-post.py's lookup: 'duplicate', the newest matching ask record, or None, as a newest-first scan of
     the whole ledger would answer. Uses the sidecar for the verified prefix (read-only; no lock) and scans
-    the bytes after its offset directly; any doubt about the sidecar scans the whole ledger."""
+    the bytes after its offset directly; any doubt about the sidecar scans the whole ledger. The sidecar is
+    used only when the gate itself would use it: it matches the file (_idx_matches) AND its claims re-derive from
+    the ledger (_idx_trusted: the open segment and k sampled segments). A hit is confirmed by reading the one
+    line it names, for an executed record ('duplicate') as for an ask; a hit that does not confirm scans the
+    whole ledger."""
     ledger_path = pathlib.Path(ledger_path)
     needle = json.dumps(tool_use_id)[1:-1]
 
@@ -1040,7 +1083,8 @@ def ledger_find_ask(ledger_path, root, session, tool_use_id):
         state = _idx_load(_idx_sidecar(ledger_path, root), ledger_path)
         try:
             with ledger_path.open("rb") as fh:
-                if state is not None and _idx_matches(state, fh, ledger_path.stat()):
+                if (state is not None and _idx_matches(state, fh, ledger_path.stat())
+                        and _idx_trusted(state, fh) is not None):
                     off = state["off"]
                     fh.seek(off)
                     r = scan(fh.read().decode("utf-8"))
@@ -1049,12 +1093,9 @@ def ledger_find_ask(ledger_path, root, session, tool_use_id):
                     hit = state["asks"].get(json.dumps([session, tool_use_id]))
                     if hit is None:
                         return None
-                    if hit[0] == "x":
-                        return "duplicate"
                     fh.seek(hit[1])
-                    line = fh.readline().decode("utf-8")
-                    r = scan(line)
-                    if isinstance(r, dict):
+                    r = scan(fh.readline().decode("utf-8"))
+                    if (hit[0] == "x" and r == "duplicate") or (hit[0] == "a" and isinstance(r, dict)):
                         return r
         except (OSError, ValueError):
             pass

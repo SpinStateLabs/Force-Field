@@ -5,7 +5,9 @@ only what was appended. This file proves, against the OLD implementation kept be
 
   1. DIFFERENTIAL: for random ledgers, random append sequences and random tampering, session_written_paths,
      ledger_append's previous-hash step and field-post's find return what the old code returned (same value, or
-     the same exception class; for ValueError the same message).
+     the same exception class; for ValueError the same message). The old ledger_append keeps its own copy of
+     every ledger: after each append, through any mix of the gate's views and appends, the two files are equal
+     byte for byte and have the same chain head.
   2. SIDECAR: deleting, corrupting, truncating, replacing or forging the sidecar only ever causes a full re-verify
      (so the answer equals the oracle's), never a skipped check. The one thing a forged sidecar plus an untouched
      ledger can still do is hide an entry from a completed segment that the random re-check has not yet drawn;
@@ -13,10 +15,17 @@ only what was appended. This file proves, against the OLD implementation kept be
   3. COMPLEXITY: ledger lines parsed per call do not grow with the size of the ledger.
   4. CONCURRENCY: parallel processes under the gate lock, a lock-free reader, no torn sidecar.
   5. TIME BUDGET: a rebuild that cannot finish saves progress and raises LedgerIndexBusy; the next call finishes it.
+     In enforce(), at both sites (the E5 check, the check before an allow), that makes the call deny E0.
+  6. SAMPLING: damage in the middle of a completed segment is noticed within a bounded number of calls (k segments
+     re-hashed per call, seeded draws).
+  7. FIELD-POST trusts the sidecar only when the gate would: an edited asks map does not suppress the evidence record.
 """
+import contextlib
 import hashlib
 import importlib.util
+import io
 import json
+import math
 import os
 import pathlib
 import random
@@ -81,6 +90,24 @@ def old_prev_hash(ledger_path):
         if lines:
             prev = json.loads(lines[-1])["hash"]
     return prev
+
+
+def old_ledger_append(ledger_path, record):
+    """The whole old ledger_append (origin/main 1679941 field-gate.py)."""
+    ledger_path.parent.mkdir(parents=True, exist_ok=True)
+    if not ledger_path.exists():
+        # New ledgers are owner-only on POSIX (no-op on Windows). Existing files are left as they are.
+        os.close(os.open(str(ledger_path), os.O_CREAT | os.O_WRONLY, 0o600))
+    prev = "0" * 64
+    if ledger_path.exists():
+        lines = ledger_path.read_text(encoding="utf-8").strip().splitlines()
+        if lines:
+            prev = json.loads(lines[-1])["hash"]
+    record["prev_hash"] = prev
+    body = json.dumps(record, sort_keys=True)
+    record["hash"] = hashlib.sha256((prev + body).encode()).hexdigest()
+    with ledger_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record, sort_keys=True) + "\n")
 
 
 RULE = "E3-policy-executed"
@@ -247,35 +274,110 @@ def last_completed_seg_end(root, path):
     return st["segs"][-1][0] if st and st["segs"] else 0
 
 
+FIXTURE = os.path.join(HERE, "field-manifest.yaml")
+
+
+def chained_ledger(root, nlines, seed, extra=None):
+    """A valid hash-chained ledger of nlines records in the gate's own serialisation (text mode, as ledger_append
+    writes it), at the fixture manifest's store path; extra = {line index: record} replaces those records."""
+    ledger = root / ".claude" / "state" / "field-ledger.jsonl"
+    ledger.parent.mkdir(parents=True, exist_ok=True)
+    rnd = random.Random(seed)
+    prev = "0" * 64
+    with open(ledger, "w", encoding="utf-8") as fh:
+        for i in range(nlines):
+            rec = dict((extra or {}).get(i) or rand_event(rnd))
+            rec["prev_hash"] = prev
+            rec["hash"] = prev = hashlib.sha256((prev + json.dumps(rec, sort_keys=True)).encode()).hexdigest()
+            fh.write(json.dumps(rec, sort_keys=True) + "\n")
+    return ledger
+
+
+PLACEHOLDER = {"ts": "t", "session": "s0", "tool": "Bash", "decision": "deny", "rule": "E0", "reason": "x"}
+
+
+def twin_step(path, twin, root, ev, irnd, tw):
+    """Append one record to both copies of a ledger: the OLD ledger_append on `twin`, the NEW one on `path`, the new one
+    on the gate's allow path (ledger_view first, as enforce() does before an allow) or its deny path (no view: a deny
+    appends without it), so a cached view of any age can be in place. ev None: the old append will raise (a tampered
+    tail); the new one must raise the same way and neither may write. Where the ledger is not valid UTF-8 only the
+    allow path is compared: there the new deny path writes a deny record the old one could not (CHANGELOG).
+    Returns None when the two agree (outcome, bytes, chain head), else what differed."""
+    try:
+        twin.read_bytes().decode("utf-8")
+        decodes = True
+    except (OSError, ValueError):
+        decodes = not twin.exists()
+    allow = (not decodes) or irnd.random() < 0.5
+    rec = dict(ev or PLACEHOLDER)
+    o = outcome(lambda: old_ledger_append(twin, dict(rec)))
+
+    def new():
+        if allow:
+            g.ledger_view(path, root)
+        g.ledger_append(path, dict(rec))
+    n = outcome(new)
+    tw["events"] += 1
+    tw["allow_path" if allow else "deny_path"] += 1
+    tw["both_raise"] += o[0] == "exc" and o == n
+    if o != n:
+        return ("outcome", "allow" if allow else "deny", o, n)
+    if path.read_bytes() != twin.read_bytes():
+        return ("bytes", "allow" if allow else "deny")
+    ho = outcome(lambda: old_prev_hash(twin))
+    if decodes:  # no view here: a cached view of any age stays in place for the next append
+        hn = outcome(lambda: g._ledger_last_hash(path))
+    else:  # _ledger_last_hash reads only the tail; the gate verifies before it chains an allow (the old code's raise)
+        hn = outcome(lambda: (g.ledger_view(path, root), g._ledger_last_hash(path))[1])
+    if ho != hn:
+        return ("chain head", "allow" if allow else "deny", ho, hn)
+    return None
+
+
 # ---------------------------------------------------------------------------------------------------------------
 # 1. differential
 # ---------------------------------------------------------------------------------------------------------------
 def differential(seeds, steps):
     bad = []
     counts = {"appends": 0, "tampers": 0, "compares": 0}
+    twin_bad = []
+    tw = {"events": 0, "allow_path": 0, "deny_path": 0, "both_raise": 0}
     for seed in seeds:
         rnd = random.Random(seed)
         set_small()
         d, path = fresh_dir("diff%d" % seed)
         root = d
+        twin = d / "twin" / "field-ledger.jsonl"  # the same ledger, written by the OLD ledger_append
+        irnd = random.Random(seed * 7919 + 1)     # view/no-view choices; rnd's stream (the ledgers) is unchanged
         g._idx_pick = lambda n, r=random.Random(seed ^ 0x5a5a): r.randrange(n)
         for _ in range(rnd.randrange(0, 40)):
-            g.ledger_append(path, rand_event(rnd))
+            diff = twin_step(path, twin, root, rand_event(rnd), irnd, tw)
+            if diff:
+                twin_bad.append((seed, "initial appends", diff))
+                break
         for step in range(steps):
+            if twin_bad and twin_bad[-1][0] == seed:
+                break
             what = "append"
             r = rnd.random()
             if r < 0.55:
                 for _ in range(rnd.randrange(1, 12)):
-                    try:
-                        old_prev_hash(path)
-                        g.ledger_append(path, rand_event(rnd))
-                    except Exception:
-                        raw_append(path, b"\n")  # a tampered tail: the real append would raise; both do (checked below)
+                    if outcome(lambda: old_prev_hash(twin))[0] == "exc":
+                        # a tampered tail: the old append raises; the new one must too, and neither writes
+                        diff = twin_step(path, twin, root, None, irnd, tw)
+                        raw_append(path, b"\n")
+                        raw_append(twin, b"\n")
+                    else:
+                        diff = twin_step(path, twin, root, rand_event(rnd), irnd, tw)
+                    if diff:
+                        twin_bad.append((seed, step, diff))
+                        break
                 counts["appends"] += 1
                 pos = None
             else:
                 what, pos = tamper(path, rnd)
                 counts["tampers"] += 1
+                twin.write_bytes(path.read_bytes())  # the same damage in the old code's copy
             old = snapshot_old(path)
             side_st = g._idx_load(g._idx_sidecar(path, root), path)
             if pos is not None and side_st and pos < (side_st["segs"][-1][0] if side_st["segs"] else 0):
@@ -314,13 +416,16 @@ def differential(seeds, steps):
             else:
                 continue
             break
-    return bad, counts
+    return bad, counts, twin_bad, tw
 
 
 SEEDS = int(os.environ.get("LI_SEEDS", "24"))  # a mutation run uses fewer
-bad, counts = differential(range(1, SEEDS + 1), 12)
+bad, counts, twin_bad, tw = differential(range(1, SEEDS + 1), 12)
 check("differential: session_written_paths / prev hash / find equal the old code (%d seeds, %s)" % (SEEDS, counts),
       not bad, repr(bad[:1])[:1500])
+check("differential: ledger_append writes the same bytes and chain head as the old ledger_append, through any mix "
+      "of views and appends (%d seeds, %s)" % (SEEDS, tw), not twin_bad and tw["deny_path"] > 0 and tw["both_raise"] > 0,
+      repr(twin_bad[:1])[:1500])
 SKIPPED_PICK = g._idx_pick
 
 # ---------------------------------------------------------------------------------------------------------------
@@ -635,6 +740,104 @@ g.ledger_append(path, {"ts": "t", "session": "s0", "tool": "Bash", "tool_use_id"
 check("find: an executed record appended after the offset makes it a duplicate", g.ledger_find_ask(path, d, "s0", "tuX") == "duplicate")
 check("find: another session does not see it", g.ledger_find_ask(path, d, "s1", "tuX") is None)
 
+# field-post trusts the sidecar only when the gate would (_idx_matches AND _idx_trusted): an asks map edited to hide
+# an ask, or to mark it executed, is not believed; the lookup then scans the ledger, as the old code did.
+def post_probe(name):
+    """with_probe's ledger plus ask tuK (s0) in a completed segment and ask tuL (s0) alone in the open segment."""
+    d, path = with_probe(name)
+    g.ledger_append(path, {"ts": "t", "session": "s0", "tool": "Bash", "tool_use_id": "tuK", "decision": "ask", "rule": "E3-policy"})
+    rnd = random.Random(17)
+    while True:
+        g.ledger_append(path, {"ts": "t", "session": "s9", "tool": "Bash", "tool_use_id": "f%d" % rnd.getrandbits(32), "decision": "allow"})
+        if (len(path.read_bytes().splitlines()) + 1) % g.IDX_SEG_LINES == 1:
+            break  # the next record opens a segment
+    g.ledger_append(path, {"ts": "t", "session": "s0", "tool": "Bash", "tool_use_id": "tuL", "decision": "ask", "rule": "E3-policy"})
+    g._VIEW.clear()
+    g.session_written_paths(path, "s0", d)  # the gate's view: saves the sidecar with both asks
+    st = g._idx_load(g._idx_sidecar(path, d), path)
+    seg_k = [i for i, s in enumerate(st["segs"]) if st["asks"][json.dumps(["s0", "tuK"])][1] < s[0]][0]
+    return d, path, st, seg_k
+
+
+KEY_K, KEY_L = json.dumps(["s0", "tuK"]), json.dumps(["s0", "tuL"])
+for label, key, how, forced in (
+        ("hide the ask in the open segment", KEY_L, "hide", None),
+        ("mark the ask in the open segment executed", KEY_L, "x", None),
+        ("hide an ask in a completed segment, that segment sampled", KEY_K, "hide", "own"),
+        ("mark an ask in a completed segment executed, another segment sampled", KEY_K, "x", "other")):
+    d, path, st, seg_k = post_probe("post_" + how + "_" + ("open" if key == KEY_L else "done"))
+    tuid = json.loads(key)[1]
+    in_open = st["asks"][key][1] >= (st["segs"][-1][0] if st["segs"] else 0)
+    rewrite_sidecar(d, path, (lambda s, key=key: s["asks"].pop(key)) if how == "hide" else
+                    (lambda s, key=key: s["asks"].__setitem__(key, ["x", s["asks"][key][1]])))
+    if forced == "own":
+        g._idx_pick = lambda n, i=seg_k: i
+    elif forced == "other":
+        g._idx_pick = lambda n, i=seg_k: (i + 1) % n
+    want = old_find(path, "s0", tuid)
+    got = post.find(path, "s0", tuid, g, d)
+    g._idx_pick = SKIPPED_PICK
+    check("field-post, sidecar edited to %s: not believed, the ask is found (equals the old code)" % label,
+          isinstance(want, dict) and got == want and (key != KEY_L or in_open), repr((got, in_open)))
+
+# k-segment sampling: invalid UTF-8 in the middle of a completed segment, sidecar untouched (the old gate denied at
+# once; a sidecar describes the bytes as they were). With seeded draws the call that notices it is deterministic.
+set_small()
+d, path = fresh_dir("ksample")
+chained_ledger(d, 8 * 1024 + 3, 31)
+g._VIEW.clear()
+g.session_written_paths(path, "s0", d)  # full verification; saves the sidecar
+st = g._idx_load(g._idx_sidecar(path, d), path)
+nseg = len(st["segs"])
+k = min(nseg, max(4, math.isqrt(nseg - 1) + 1), 32)  # the documented k (field-gate.py _idx_sample)
+bound = math.ceil(math.log(1e-3) / math.log(1 - k / nseg))  # k segments per call miss it this long with p <= 0.001
+m = nseg // 2
+data = path.read_bytes()
+p = data.find(b'"ts"', st["segs"][m - 1][0])
+check("k-segment sampling: the damage sits mid-ledger, in completed segment %d of %d, outside the tail window" % (m, nseg),
+      st["segs"][m - 1][0] <= p < st["segs"][m][0] and p < st["off"] - g.IDX_TAIL)
+path.write_bytes(data[:p] + b"\xff" + data[p + 1:])
+want = outcome(lambda: old_session_written_paths(path, "s0"))
+g._idx_pick = lambda n, r=random.Random(20261025): r.randrange(n)
+noticed = None
+for c in range(1, bound + 1):
+    if written(d, path) == want:
+        noticed = c
+        break
+check("k-segment sampling: noticed on call %s, within the bound of %d calls for k = %d of %d segments per call "
+      "(expected %.0f calls; one segment per call: %.0f)" % (noticed, bound, k, nseg, nseg / k, nseg),
+      noticed is not None and want[0] == "exc", repr(want))
+check("k-segment sampling: once noticed, every later call fails like the old code (the sidecar was dropped)",
+      all(written(d, path) == want for _ in range(3)))
+g._idx_pick = SKIPPED_PICK
+sample = getattr(g, "_idx_sample", None)
+real_pick = g._idx_pick
+g._idx_pick = lambda n: int.from_bytes(os.urandom(4), "big") % n
+draws = [sample(nseg) for _ in range(20)] if sample else []
+check("k-segment sampling: each call draws k = %d distinct segments" % k,
+      bool(draws) and all(len(x) == k == len(set(x)) and all(0 <= i < nseg for i in x) for x in draws))
+check("k-segment sampling: with at most %d segments, every one, every call" % 4,
+      bool(sample) and all(sorted(sample(n)) == list(range(n)) for n in (1, 2, 3, 4)))
+g._idx_pick = lambda n: 5
+check("k-segment sampling: a patched constant draw checks that one segment (the forced-draw tests rely on it)",
+      bool(sample) and sample(nseg) == [5])
+# the re-hash of a segment drawn after the first one (digest and line count, no re-derivation), on its own
+d, path = with_probe("wb_second")
+st = g._idx_load(g._idx_sidecar(path, d), path)
+data = path.read_bytes()
+p = data.find(b'"ts": "t"', st["segs"][2][0])
+check("k-segment sampling: a neutral edit sits in completed segment 3", st["segs"][2][0] <= p < st["segs"][3][0])
+path.write_bytes(data[:p] + b'"ts": "u"' + data[p + 9:])
+draws_seq = iter([0, 3] + [0] * 100)
+g._idx_pick = lambda n: next(draws_seq)
+with path.open("rb") as fh:
+    check("k-segment sampling: a changed segment drawn second (re-hashed, not re-derived) is refused",
+          g._idx_trusted(st, fh) is None)
+    path.write_bytes(data)
+    draws_seq = iter([0, 3] + [0] * 100)
+    check("k-segment sampling: restored, the same draws accept the sidecar", g._idx_trusted(st, fh) is not None)
+g._idx_pick = real_pick
+
 g.IDX_SEG_LINES = 512
 g.IDX_PERSIST_BYTES = 128 * 1024
 g._idx_pick = SKIPPED_PICK
@@ -714,6 +917,117 @@ while True:
 check("repeated busy calls make progress and finish (%d calls)" % steps, steps > 0)
 g._VIEW.clear()
 check("after finishing: answers equal the old code", snapshot_new(path, d) == snapshot_old(path))
+
+# ---------------------------------------------------------------------------------------------------------------
+# 4b. the budget wiring in enforce(): a verification that runs out of its time budget makes the CALL deny E0 ("being
+#     rebuilt") at both sites, the E5 check and the check before an allow, saves its progress, and the next call
+#     continues from it. A slow verification is made deterministic by handing ledger_view a deadline that has
+#     already passed (its budget used up); the scan, the busy path, the deny and the ledger record are the real ones.
+# ---------------------------------------------------------------------------------------------------------------
+MANIFEST = g.load_manifest(pathlib.Path(FIXTURE))
+real_view, real_scan = g.ledger_view, g._idx_scan
+scan_starts = []
+
+
+def spent_budget(n_spent):
+    """ledger_view as enforce() calls it, except that the first n_spent calls find their time budget used up (the
+    later ones run to the end). .calls: the deadlines enforce() passed."""
+    calls = []
+
+    def view(ledger_path, root=None, deadline=None):
+        calls.append(deadline)
+        return real_view(ledger_path, root, time.monotonic() - 1 if len(calls) <= n_spent else None)
+    view.calls = calls
+    return view
+
+
+def recording_scan(fh, state, deadline, open_data=b""):
+    scan_starts.append(state["off"])
+    return real_scan(fh, state, deadline, open_data)
+
+
+def enforce_call(root, tool, ti, session):
+    """One gate call in-process, as main() makes it once it holds the lock: (exit code, stderr, last ledger record)."""
+    ledger, source = g.resolve_store(MANIFEST, root)
+    err, out = io.StringIO(), io.StringIO()
+    g._VIEW.clear()  # a new hook process has no cached view
+    code = None
+    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+        try:
+            g.enforce({"session_id": session, "tool_name": tool, "tool_input": ti, "tool_use_id": "tu-budget",
+                       "permission_mode": "default"}, MANIFEST, root, ledger, source)
+        except SystemExit as e:
+            code = e.code
+    return code, err.getvalue(), json.loads(ledger.read_text(encoding="utf-8").strip().splitlines()[-1])
+
+
+def budget_root(name, nlines, seed, extra=None):
+    root = pathlib.Path(TMP) / name
+    shutil.rmtree(root, ignore_errors=True)
+    (root / ".claude" / "state").mkdir(parents=True)
+    shutil.copy(FIXTURE, root / "field-manifest.yaml")
+    ledger = chained_ledger(root, nlines, seed, extra)  # ~3.4 MB: more than three 1 MiB scan blocks
+    return root, ledger, g._idx_sidecar(ledger, root)
+
+
+set_small()
+g.IDX_SEG_LINES = 512
+WRITE = ("Write", {"file_path": "notes.txt", "content": "x"})
+try:
+    # (a) the check before an allow: a Write (no E5) has no other ledger check, so this site alone stands between a
+    #     cold rebuild on a large ledger and an allow
+    root, ledger, side = budget_root("budget_allow", 12000, 21)
+    g._idx_scan = recording_scan
+    g.ledger_view = spent_budget(10 ** 6)
+    code, err, last = enforce_call(root, WRITE[0], WRITE[1], "b1")
+    check("budget, check before an allow (Write): a verification out of budget DENIES the call E0 'being rebuilt'",
+          code == 2 and "FIELD DENY [E0]" in err and "being rebuilt" in err and last.get("decision") == "deny"
+          and last.get("rule") == "E0" and "being rebuilt" in last.get("reason", ""),
+          repr((code, err[-300:], last.get("decision"), last.get("rule"))))
+    check("budget: enforce() gave the verification its time budget (deadline = start + TIME_BUDGET_S), once",
+          g.ledger_view.calls == [g._T0 + g.TIME_BUDGET_S], repr(g.ledger_view.calls))
+    st1 = g._idx_load(side, ledger)
+    off1 = st1["off"] if st1 else -1
+    check("budget: the progress was persisted (sidecar offset %d: > 0 and short of the file)" % off1,
+          st1 is not None and 0 < off1 < ledger.stat().st_size)
+    del scan_starts[:]
+    code, err, last = enforce_call(root, WRITE[0], WRITE[1], "b1")
+    st2 = g._idx_load(side, ledger)
+    check("budget: the next call continues from the saved progress (scan starts at %s, not 0), denies E0 again, "
+          "and saves more (%s)" % (scan_starts[:1], st2 and st2["off"]),
+          code == 2 and "being rebuilt" in err and last.get("rule") == "E0" and scan_starts[:1] == [off1]
+          and st2 is not None and st2["off"] > off1, repr((code, err[-300:])))
+    g.ledger_view = spent_budget(0)
+    del scan_starts[:]
+    code, err, last = enforce_call(root, WRITE[0], WRITE[1], "b1")
+    check("budget: when the verification finishes inside the budget, the same call is allowed (scan resumed at %s)"
+          % scan_starts[:1], code == 0 and last.get("decision") == "allow" and scan_starts[:1] == [st2["off"]],
+          repr((code, err[-300:])))
+
+    # (b) the E5 check (Bash, E5 on): session b5 wrote run.sh early in the ledger. Only the E5 site's verification is
+    #     out of budget, so a swallowed LedgerIndexBusy there would let the call through to an allow
+    (pathlib.Path(TMP) / "budget_e5").mkdir(parents=True, exist_ok=True)  # path_key resolves the root on disk
+    key = g.path_key("run.sh", pathlib.Path(TMP) / "budget_e5")
+    root, ledger, side = budget_root("budget_e5", 12000, 22, {100: {
+        "ts": "t", "session": "b5", "tool": "Write", "path": key, "decision": "allow"}})
+    g._idx_scan = real_scan
+    g.ledger_view = spent_budget(1)
+    code, err, last = enforce_call(root, "Bash", {"command": "bash ./run.sh"}, "b5")
+    check("budget, E5 check (Bash, E5 on): a verification out of budget DENIES the call E0 'being rebuilt' at the E5 "
+          "check itself", code == 2 and "FIELD DENY [E0]" in err and "being rebuilt" in err and last.get("rule") == "E0"
+          and len(g.ledger_view.calls) == 1, repr((code, err[-300:], g.ledger_view.calls)))
+    st1 = g._idx_load(side, ledger)
+    check("budget, E5 check: the progress was persisted",
+          st1 is not None and 0 < st1["off"] < ledger.stat().st_size, repr(st1 and st1["off"]))
+    g._idx_scan = recording_scan
+    del scan_starts[:]
+    g.ledger_view = spent_budget(0)
+    code, err, last = enforce_call(root, "Bash", {"command": "bash ./run.sh"}, "b5")
+    check("budget, E5 check: the next call continues from the saved progress and, caught up, E5 denies run.sh",
+          code == 2 and "FIELD DENY [E5]" in err and st1 is not None and scan_starts[:1] == [st1["off"]],
+          repr((code, err[-300:], scan_starts[:1])))
+finally:
+    g.ledger_view, g._idx_scan = real_view, real_scan
 
 # ---------------------------------------------------------------------------------------------------------------
 # 5. concurrency: parallel processes under the gate lock; a lock-free reader; compare with a from-scratch rebuild
@@ -859,6 +1173,28 @@ rc, err = gate_call(root2, "t1", "Bash", {"command": "ls"})
 check("e2e (E5 off): invalid UTF-8 in the ledger denies an otherwise allowed call (E0)", rc == 2 and "E0" in err, err)
 rc, err = gate_call(root2, "t1", "Bash", {"command": "ls"})
 check("e2e (E5 off): and keeps denying (the stale sidecar is dropped)", rc == 2 and "E0" in err, err)
+
+# the post hook, whole (subprocess, production segment size): an ask hidden from the sidecar's asks map still gets its
+# executed record, because the hook re-derives the open segment before it believes the map
+g.IDX_SEG_LINES, g.IDX_PERSIST_BYTES = 512, 128 * 1024  # what the hook process uses
+root3 = pathlib.Path(TMP) / "e2e_post"
+shutil.rmtree(root3, ignore_errors=True)
+(root3 / ".claude" / "state").mkdir(parents=True)
+shutil.copy(FIXTURE, root3 / "field-manifest.yaml")
+ledger3 = chained_ledger(root3, 600, 41, {590: {"ts": "t", "session": "p1", "tool": "Bash", "tool_use_id": "tuE2E",
+                                                "permission_mode": "default", "input_digest": "0" * 16, "decision": "ask",
+                                                "rule": "E3-policy", "reason": "x"}})
+g._VIEW.clear()
+g.ledger_view(ledger3, root3)  # the gate's sidecar: one completed segment, the ask in the open segment
+rewrite_sidecar(root3, ledger3, lambda s: s["asks"].pop(json.dumps(["p1", "tuE2E"])))
+p = subprocess.run([sys.executable, os.path.join(HOOKS, "field-post.py")], cwd=str(root3), capture_output=True,
+                   env=dict(os.environ, CLAUDE_PROJECT_DIR=str(root3)),
+                   input=json.dumps({"hook_event_name": "PostToolUse", "session_id": "p1", "tool_use_id": "tuE2E",
+                                     "permission_mode": "default", "tool_name": "Bash", "cwd": str(root3)}).encode())
+last = json.loads(ledger3.read_text(encoding="utf-8").strip().splitlines()[-1])
+check("e2e field-post: an ask hidden from the sidecar's asks map still gets its executed record",
+      p.returncode == 0 and last.get("rule") == "E3-policy-executed" and last.get("tool_use_id") == "tuE2E",
+      repr((p.returncode, p.stderr.decode(errors="replace")[-300:], last.get("rule"))))
 
 # post-hook rule constants agree with the gate's
 check("field-post constants equal the gate's", post.RULE == g.EXEC_RULE and post.ASK_RULE == g.ASK_RULE)
