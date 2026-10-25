@@ -14,7 +14,7 @@ set -u
 cd "$(dirname "$0")"
 HERE="$PWD"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) plat=windows;; *) plat=posix;; esac
-SUITES=${SUITES:-"run.sh run_e5.sh run_launcher.sh run_e3_policy.sh run_estate_kill.sh run_post_hook.sh run_links.sh run_shell_forms.sh"}   # SUITES=... narrows a trial run
+SUITES=${SUITES:-"run.sh run_e5.sh run_launcher.sh run_e3_policy.sh run_estate_kill.sh run_post_hook.sh run_links.sh run_shell_forms.sh run_hooks_config.sh"}   # SUITES=... narrows a trial run
 OUT=$(mktemp -d); trap 'rm -rf "$OUT"' EXIT
 fail=0
 echo "platform: $plat   bash: ${BASH_VERSION}   python3: $(python3 --version 2>&1)   PyYAML: $(python3 -c 'import yaml;print(yaml.__version__)' 2>&1)"

@@ -5,6 +5,9 @@
 # tool anyway. A bare `python3` command therefore failed OPEN whenever Python could not start: no python3
 # on PATH (exit 127), or the Windows Store alias stub with no Python behind it (exit 9009). This launcher
 # tries python3, then the Windows launcher `py -3`, then python, with the hook input replayed to each.
+# (ADR-0081: hooks.json also sets "onFailure": "block", so on Claude Code 2.1.295 and later any other exit, a timeout
+# or a shell that cannot start blocks the call. This launcher still answers for older builds, for projects without
+# a manifest, and with a reason.)
 # Once field-gate.py runs it exits 0 or 2 only (its __main__ guard), so:
 #   0 or 2        -> the gate's verdict, passed through;
 #   1-127 (not 2) -> that interpreter never ran the gate (not found, a stub, Python 2, too old): try the next;

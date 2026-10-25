@@ -149,6 +149,18 @@ in a project with a manifest it denies with E0. Without PyYAML the gate fails cl
 `--bare` and `disableAllHooks` turn it off. Once a manifest exists the agent cannot edit it —
 governance changes are made by the human, outside the session.
 
+When the gate hook itself fails (ADR-0081, not yet released): `hooks.json` sets `"onFailure": "block"` on the gate. On Claude Code
+2.1.295 and later a gate hook that times out (10 s) BLOCKS the tool call (Enforced; measured on Claude Code 2.1.308 on Windows 10 with
+Git Bash, 2026-10-25: a stand-in gate that sleeps past the timeout was blocked, reason `timed out; blocking because onFailure is "block"`,
+10.8 s after the hook started, and the command did not run). A gate hook that crashes, cannot start or prints invalid JSON is blocked by
+the same documented setting (Declared: only the timeout was run). On versions before 2.1.295 the key is ignored and such failures let the
+call through (Declared: no older build was run). Plugin users should check `claude --version`. On Windows without Git Bash the behaviour
+differs before 2.1.310 (2.1.299, 2.1.309 and 2.1.310 each changed when such a hook fails open; on 2.1.308 with Git Bash not detected a
+timed-out gate was blocked with or without the key, measured). Not measured: that 2.1.308 with Git Bash lets a timed-out gate through
+when the key is absent (the Claude Code docs say it does). Because the hook cannot report "no manifest" when it never answers, a stalled
+gate now stops tool use in every project where the plugin is enabled, governed or not, until it recovers. The live check is
+`hooks/test/run_timeout_live.sh` (needs a logged-in `claude`; three model calls; not in CI).
+
 ## Limitations
 
 Enforcement and Ledger are runtime-enforced in Claude Code (E1–E5, L above); Federated, Identity
@@ -164,8 +176,8 @@ matching is a guardrail, not a sandbox. E2 and E5 match command text: indirectio
 caught, and paths resolve against the project root rather than the shell's working directory
 (`cd .claude && rm -r state`). E5 is strict on purpose: non-read-only commands naming a written file
 (`cp`, `mv`, `pytest x.py`) are denied unless exempted. Hook input over 4 MiB, a shell command over
-64 KiB, or a check that runs past 5 s denies with E0 rather than risk the 10 s hook timeout, which
-fails open. `/field audit` produces an audit-ready report; independent certification is a separate
+64 KiB, or a check that runs past 5 s denies with E0 rather than run into the 10 s hook timeout (which
+blocks on Claude Code 2.1.295 and later and fails open before: see "When the gate hook itself fails"). `/field audit` produces an audit-ready report; independent certification is a separate
 service.
 
 ### Known-bypass register (E2 and E5 are text-scanning controls, not a sandbox)
