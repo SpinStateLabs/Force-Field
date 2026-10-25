@@ -163,6 +163,8 @@ jobs:
         run: bash plugins/field/hooks/test/run_links.sh
       - name: Shell-form tests (cmd /c, colon-bound parameters, link globs; PR 15)
         run: bash plugins/field/hooks/test/run_shell_forms.sh
+      - name: Incremental ledger index tests (differential against the old code, sidecar attacks)
+        run: bash plugins/field/hooks/test/run_ledger_index.sh
       - name: hooks.json tests (gate hook fails closed, onFailure block; ADR-0081)
         run: bash plugins/field/hooks/test/run_hooks_config.sh
 
