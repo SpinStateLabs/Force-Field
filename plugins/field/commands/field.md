@@ -213,9 +213,11 @@ FIELD kill switch is TRIPPED — <path>
 1. Run `python3 "${CLAUDE_PLUGIN_ROOT}/hooks/verify-ledger.py"` with no arguments — it resolves
    the ledger exactly as the gate does.
 2. Print its output verbatim: `LEDGER INTACT (<n> records, <path>)`, or `LEDGER TAMPERED` with the
-   offending line numbers, or `LEDGER MISSING: <path>`.
+   offending line numbers, or `LEDGER MISSING: <path>` (a ledger file with no records is reported the
+   same way, never as intact; exit code 2).
 3. State once: the chain is tamper-evident, not tamper-proof — anyone with write access to the
-   ledger file can rewrite it.
+   ledger file can rewrite it, and a ledger deleted and restarted by a later gated call verifies as a
+   short, valid chain.
 4. No mutation.
 
 ### `status` addition

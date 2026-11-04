@@ -17,6 +17,35 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
+## field — 1.5.2 / marketplace — 1.7.2 — 2026-11-04
+
+Four findings from an external tester. Findings 1 to 3 were reproduced against 1.5.1 before they were fixed (finding 4 could not be: no bash 3.2 was available); each has a regression test in `hooks/test/run_bypass.sh` or, for finding 4, a changed line in `run_e5.sh`.
+
+### Fixed
+
+- **CRITICAL: the kill switch could be switched off by deleting the manifest.** `main()` exited 0 ("no manifest: not a FIELD-governed project") before E1 ran, and `python3 -c "import os; os.remove('field-manifest.yaml')"` was not denied by E2 because the built-in patterns are end-anchored and the token ended in `')"`. After the delete every call passed, `.claude/state/KILL` included. Two changes close it. (1) When `.claude/state/` holds a FIELD artefact (`field-ledger.jsonl`, `field-session-calls.json`, `field-gate.lock`, `KILL`) or `FIELD_MANIFEST` is set, a missing or unreadable manifest now denies every gated call with E0; and the default sentinel `.claude/state/KILL` is read before the manifest, so a kill holds with or without one. A project with no manifest and no FIELD state still exits 0 and the hook writes nothing there. (2) E2 matches the protected names (the manifest, `.claude/settings*.json`, `hooks.json`, the ledger, the call counter, `.claude/state`) as substrings of the whole command text for PowerShell and for any Bash command that runs an interpreter or code string (`python -c`, `node -e`, `perl -e`, `ruby -e`, `php -r`, `sh -c`, `awk`, `eval`, also behind `sudo`/`env`), case-insensitively, including heredoc bodies. `field-manifest.yaml.example`, `.claude/state/KILL` and `.claude/state/field.json` stay writable.
+- **HIGH: `cd .claude && rm -r state` was not denied, and an emptied ledger verified INTACT.** E2 resolved every word against the project root, so `state` was not `.claude/state`. A literal `cd` earlier in the same Bash command, and the `cwd` the hook input reports (the shell's directory persists between calls: `cd .claude` in one call, `rm -r state` in the next), are now applied to the later words. Separately, `verify-ledger.py` printed `LEDGER INTACT (0 records)`, exit 0, for an empty file; a ledger with no records is now `LEDGER MISSING`, exit 2. See Known limits for what this does not cover.
+- **MEDIUM: E3 depended on how the flags were spelled.** `rm -fr x`, `rm -r -f x`, `rm --recursive --force x`, `git push -f` and `git push origin +main` were allowed while `rm -rf x` and `git push --force-with-lease` were denied. The gate now also matches each pattern against a canonical spelling of the command's `rm` (a recursive flag, `-r` `-R` `--recursive`, and a force flag, `-f` `--force`, in any order, split or combined) and `git push` (`-f`, any `--force*`, a `+refspec`), through `sh -c`, `eval` and wrappers. The default pattern list is unchanged.
+- **`hooks/test/run_e5.sh` used a bash 4 construct.** `case "${out,,}"` (lower-casing, bash 4.0+) is now `tr`. This is the only bash-4-only construct found in `hooks/test/*.sh`. Not run on bash 3.2 here (no macOS available).
+
+### Added
+
+- `hooks/test/run_bypass.sh`: regression tests for the four findings, written for bash 3.2. Runs in the `gate-tests` CI job.
+
+### Changed
+
+- Behaviour change to know about: a project that has run the gate and then loses its manifest is denied (E0) until a human restores the manifest or removes `.claude/state/`. `/field init` in such a project is denied too; remove `.claude/state/` first.
+- The interpreter-text match is limited to commands that run an interpreter (and PowerShell). A plain `git commit -m "update field-manifest.yaml"` or `echo "see field-manifest.yaml"` is still allowed, as before. Making it a blanket match would deny those.
+
+### Known limits
+
+- A tripwire on command text, not a sandbox, as before. Not caught: a path built at run time (`os.path.join('.claude', 'st' + 'ate')`, `chr()` arithmetic, a name read from the environment or a file), a directory held in a variable (`cd "$D" && rm -r state`), a quoted name given to a command that is neither an interpreter nor in E2's mutating list (`git rm "field-manifest.yaml"`, `rsync --delete`), and programs that delete without naming the target (`git clean`, `find -delete`).
+- A deleted ledger that the next gated call restarts is a short, valid chain and still verifies INTACT; `verify-ledger.py` has no anchor outside `.claude/state/` to compare against. 1.5.2 makes the delete harder (E2 now catches `cd`-relative and interpreter forms) and reports a missing or empty file; it does not make a restart detectable.
+- E3 canonicalises `rm` and `git push` only. `git push --delete`, `git clean -fdx`, `dd`, `truncate` are not in the default patterns and are not canonicalised.
+- Credit: external tester (name TBD, awaiting consent).
+
+---
+
 ## field — 1.5.1 / marketplace — 1.7.1 — 2026-10-22
 
 ### Changed

@@ -130,7 +130,10 @@ defer, and how much it may spend.
     created by Bash itself still get through.
   - `protected_paths[]` are Python regexes matched against file-tool paths and Bash command
     text (E2), in addition to the built-in set (the manifest, `.claude/settings*.json`,
-    `hooks.json`, the ledger, the call counter). Regex matching is a tripwire, not a sandbox.
+    `hooks.json`, the ledger, the call counter). In PowerShell and in Bash commands that run an
+    interpreter or code string (`python -c`, `node -e`, ...) the names are matched as substrings of
+    the whole text (1.5.2). Regex matching is a tripwire, not a sandbox: a path built at run time is
+    not caught.
 
 **Critical gap:** missing `enforcement.kill_switch` (or a kill switch without `endpoint`/`method`)
 → **INVALID**. An agent that cannot be stopped must never be marked valid.

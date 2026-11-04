@@ -120,11 +120,13 @@ The plugin ships an **Enforcement Gate**: a Claude Code `PreToolUse` hook (`hook
 | Rule | Manifest key | Effect |
 |---|---|---|
 | E1 kill switch | `enforcement.kill_switch.endpoint` with `method: file` (else `.claude/state/KILL`); `kill_switch.local_sentinel` (+ opt-in `sentinel_max_age_s`) for an estate kill, 1.4+ | sentinel file present → every gated tool call denied. `local_sentinel` is created and removed by a host watcher that polls the estate kill switch (field-platform `tools/estate_kill_watcher.py`); the gate makes no network call. With `sentinel_max_age_s` a missing or stale `<local_sentinel>.alive` stamp also denies. Put it under `.claude/state/` (already E2-protected as a directory) |
-| E2 protected paths | built-in set + `enforcement.protected_paths` (regexes) | edits/commands touching the manifest, `.claude/settings*.json`, `hooks.json`, the ledger, the call counter or anything else in `.claude/state/` denied (1.2.3: every unquoted shell word is checked, not only the command's end, plus quoted words given to a mutating command, a redirect, `sh -c`/`eval`/`xargs`; paths are normalised and matched case-insensitively; globs in those positions such as `rm *.yaml` or `ls *.yaml | xargs rm` are expanded against the real paths, while `ls *` and `grep "x"` are not; `rm`/`mv` of the project directory or `.claude/` denied). The kill sentinel and `.claude/state/field.json` stay writable so `/field kill` and the skill work |
-| E3 irreversible actions | `enforcement.irreversible_actions.deny_patterns` (regexes); opt-in `deny_patterns_verdict: policy` (1.3+) | matching Bash or PowerShell commands denied. With `deny_patterns_verdict: policy` the verdict follows `irreversible_action_policy`: `forbid` denies, `require_human_approval` asks (Claude Code's permission prompt; denied when headless), `allow_with_ledger` allows with a ledger record. Default `deny` |
+| E2 protected paths | built-in set + `enforcement.protected_paths` (regexes) | edits/commands touching the manifest, `.claude/settings*.json`, `hooks.json`, the ledger, the call counter or anything else in `.claude/state/` denied (1.2.3: every unquoted shell word is checked, not only the command's end, plus quoted words given to a mutating command, a redirect, `sh -c`/`eval`/`xargs`; paths are normalised and matched case-insensitively; globs in those positions such as `rm *.yaml` or `ls *.yaml | xargs rm` are expanded against the real paths, while `ls *` and `grep "x"` are not; `rm`/`mv` of the project directory or `.claude/` denied; 1.5.2: a `cd` earlier in the command, or the shell's directory from an earlier call, is applied to later words, so `cd .claude && rm -r state` is denied; in PowerShell and in any Bash command that runs an interpreter or code string (`python -c`, `node -e`, `perl -e`, `ruby -e`, `php -r`, `awk`, `eval`) the protected names are matched as substrings anywhere in the text, so `os.remove('field-manifest.yaml')` is denied). The kill sentinel and `.claude/state/field.json` stay writable so `/field kill` and the skill work |
+| E3 irreversible actions | `enforcement.irreversible_actions.deny_patterns` (regexes); opt-in `deny_patterns_verdict: policy` (1.3+) | matching Bash or PowerShell commands denied. 1.5.2: patterns are also matched against a canonical spelling of `rm` (any of `-r`/`-R`/`--recursive` with `-f`/`--force`, in any order, split or combined: `rm -fr x`, `rm -r -f x`) and `git push` (`-f`, `--force`, `--force-with-lease`, `--force-if-includes`, a `+refspec`), so the default `rm -rf` and `--force` patterns catch them. With `deny_patterns_verdict: policy` the verdict follows `irreversible_action_policy`: `forbid` denies, `require_human_approval` asks (Claude Code's permission prompt; denied when headless), `allow_with_ledger` allows with a ledger record. Default `deny` |
 | E4 call budget | `enforcement.rate_limits` entry `{action: tool_call, period: session}` | per-session tool-call ceiling (a proxy, not a dollar spend cap) |
 | E5 session-written execution (opt-in, 1.2+) | `enforcement.irreversible_actions.session_written_exec: deny` (+ `session_written_exec_allow` regexes) | a Bash command that names a file this session wrote with a file tool is denied, unless it is a read-only tool (`cat`, `ls`, `git`, ...); covers `bash x.sh`, `./x.sh`, `python3 x.py`, `cat x.sh \| bash`, `-c` strings, wrappers like `sudo` |
 | L ledger | `ledger.store` when path-like, else `.claude/state/field-ledger.jsonl` | every decision appended, sha-256 hash-chained; `/field verify` checks it. File-tool records carry `path`: root-relative inside the project, `sha256:<hex>` outside it |
+
+Missing manifest (1.5.2): the gate used to exit 0 with no manifest, so deleting `field-manifest.yaml` (for example `python3 -c "import os; os.remove('field-manifest.yaml')"`) switched governance off, kill switch included. Now, when `.claude/state/` holds a FIELD artefact (the ledger, the call counter, the lock, `KILL`) or `FIELD_MANIFEST` is set, a missing or unreadable manifest denies every gated call with E0, and the default sentinel `.claude/state/KILL` is read before the manifest, so a kill holds whatever the manifest says. A project with no manifest and no FIELD state is still ungoverned (exit 0, nothing written). To decommission a governed project a human deletes `.claude/state/` outside the session.
 
 Post-call evidence (1.5+): a `PostToolUse` hook (`hooks/field-post.py`) appends one ledger record, `rule: "E3-policy-executed"`,
 when a call the gate answered with an ask (`E3-policy`) ran. It is evidence only (always exit 0, no verdict) and it records that the
@@ -154,15 +156,24 @@ governance changes are made by the human, outside the session.
 Enforcement and Ledger are runtime-enforced in Claude Code (E1–E5, L above); Federated, Identity
 and Delegation remain declared, not enforced. The spend cap remains a tool-call proxy. The ledger
 hash chain is tamper-evident, not tamper-proof: `/field verify` detects an edit that breaks a
-link, not a ledger re-chained from scratch after the edit, which verifies INTACT. The chain is
+link, not a ledger re-chained from scratch after the edit, which verifies INTACT. `/field verify` reports
+a missing or empty ledger as `LEDGER MISSING` with a non-zero exit (1.5.2), but a ledger that was
+deleted and then restarted by the next gated call is a short, valid chain and verifies INTACT: the
+chain has no external anchor, so a record count that dropped is visible only to someone who kept the
+earlier count. The chain is
 unkeyed (`sha-256-chain`); the gate implements no signed or keyed scheme, so the chain's value
 rests on who can write the file. E2 denies the agent's own tools every write to the ledger and to
 the rest of `.claude/state/`; a process outside the gate (or the human) can still rewrite it. Regex
 matching is a guardrail, not a sandbox. E2 and E5 match command text: indirection (`F=x.sh; bash $F`,
 `eval`, variables), programs that load or delete a file without naming it (`make`, `npm test`,
 `git clean`, `find -delete`) and files created by Bash itself (`echo > x.sh`, `curl -o`) are not
-caught, and paths resolve against the project root rather than the shell's working directory
-(`cd .claude && rm -r state`). E5 is strict on purpose: non-read-only commands naming a written file
+caught. A path built at run time (`os.path.join('.claude', 'st' + 'ate')`, `chr()` arithmetic, a
+value read from the environment or a file) is not caught by the interpreter-text match either. Paths
+resolve against the project root, plus the working directory the hook input reports and any literal
+`cd` in the same command (`cd .claude && rm -r state` is denied since 1.5.2); a directory held in a
+variable (`cd "$D" && rm -r state`) is not followed. E3 canonicalises `rm` and `git push` flags, not
+every irreversible program (`git push --delete`, `git clean -fdx`, `dd`, `truncate` are not in the
+default patterns). E5 is strict on purpose: non-read-only commands naming a written file
 (`cp`, `mv`, `pytest x.py`) are denied unless exempted. Hook input over 4 MiB, a shell command over
 64 KiB, or a check that runs past 5 s denies with E0 rather than risk the 10 s hook timeout, which
 fails open. `/field audit` produces an audit-ready report; independent certification is a separate
