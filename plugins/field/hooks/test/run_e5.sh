@@ -142,7 +142,7 @@ expect "E1 kill: MCP tool denied"                2 "$(call t1 mcp__fs__write_fil
 expect "E1 kill: WebFetch denied"                2 "$(call t1 WebFetch '{"url":"https://example.com","prompt":"x"}')"
 expect "E1 kill: Read still ungated"             0 "$(call t1 Read '{"file_path":"x.sh"}')"
 out=$(printf '{"session_id":"t1","tool_name":"Bash","tool_input":{"command":"ls"}}' | python3 "$G" 2>&1 >/dev/null)
-case "${out,,}" in *"(.claude/state/kill)"*) echo "PASS  E1 reason names the root-relative sentinel";; *) echo "FAIL  E1 reason: $out"; fail=1;; esac
+case "$(printf %s "$out" | tr 'A-Z' 'a-z')" in *"(.claude/state/kill)"*) echo "PASS  E1 reason names the root-relative sentinel";; *) echo "FAIL  E1 reason: $out"; fail=1;; esac
 rm .claude/state/KILL
 expect "E2: absolute ledger path via MCP"      2 "$(call t1 mcp__fs__write_file '{"path":"'"$(abspath "$HERE")"'/.claude/state/field-ledger.jsonl","content":"x"}')"
 # ---- E2 hardening (field 1.2.3; independent review 2026-10-12) ----

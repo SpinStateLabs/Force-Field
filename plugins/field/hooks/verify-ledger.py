@@ -5,9 +5,11 @@ Usage: verify-ledger.py [path]
 Without a path the ledger is located exactly as the gate locates it: ledger.store from
 field-manifest.yaml when it is path-like, else .claude/state/field-ledger.jsonl, relative to
 $CLAUDE_PROJECT_DIR or the current directory.
-Exit 0 = LEDGER INTACT, 1 = LEDGER TAMPERED, 2 = ledger missing.
+Exit 0 = LEDGER INTACT, 1 = LEDGER TAMPERED, 2 = ledger missing or empty (1.5.2: a file with no records
+proves nothing, so it is reported as missing, never as intact).
 The chain is tamper-evident, not tamper-proof: it detects an edit that breaks a link, not a ledger
-re-chained from scratch after the edit (that verifies INTACT; there is no key). The gate's E2 rule
+re-chained from scratch after the edit (that verifies INTACT; there is no key), and not a ledger deleted
+and then started afresh by the next gated call, which is a short, valid chain. The gate's E2 rule
 denies the agent's own tools any write to the ledger or its directory; keep write access to the
 ledger away from the agent for the chain to mean anything.
 """
@@ -64,6 +66,9 @@ def main():
                 print(f"line {i}: hash mismatch")
                 ok = False
             prev = h
+    if records == 0 and ok:
+        print(f"LEDGER MISSING: {path} (the file holds no records)")
+        sys.exit(2)
     print(f"{'LEDGER INTACT' if ok else 'LEDGER TAMPERED'} ({records} records, {path})")
     sys.exit(0 if ok else 1)
 

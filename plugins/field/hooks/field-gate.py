@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-FIELD Enforcement Gate — Claude Code PreToolUse hook (field plugin v1.4).
+FIELD Enforcement Gate — Claude Code PreToolUse hook (field plugin v1.5.2).
 
 Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project directory
 ($CLAUDE_PROJECT_DIR, else the hook input's cwd, else the process cwd) and enforces:
@@ -29,6 +29,15 @@ Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project di
                           ls *.yaml | xargs rm, find -name '*.yaml' -delete) are expanded against the
                           governance paths; ls *, cat *.md and grep "x" are not. A Bash rm/rmdir/mv/
                           shred/unlink aimed at the project directory, a parent or .claude/ is denied.
+                          (1.5.2) A `cd <dir>` earlier in a Bash command, and the hook input's cwd (the shell's
+                          directory from an earlier call), are applied to the later words, so `cd .claude && rm -r
+                          state`, or `cd .claude` in one call and `rm -r state` in the next, name .claude/state.
+                          In PowerShell, and in any Bash command
+                          that runs an interpreter or code string (python -c, node -e, perl -e, ruby -e, php -r,
+                          sh -c, awk, ...), the protected names (the manifest, .claude/settings*.json, hooks.json,
+                          the ledger, .claude/state) are also matched as substrings anywhere in the command text,
+                          so os.remove('field-manifest.yaml') is denied. A tripwire on text, not a sandbox: a
+                          path built at run time (os.path.join('.claude', 'st' + 'ate')) is not caught.
   E3  irreversible ops -> deny shell commands matching enforcement.irreversible_actions.deny_patterns
                           (Python re.search), independent of irreversible_action_policy, unless the
                           manifest opts in with irreversible_actions.deny_patterns_verdict: policy
@@ -36,6 +45,11 @@ Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project di
                           deny; require_human_approval -> permissionDecision "ask" (exit 0), only in a
                           permission_mode live-tested to show a prompt, else deny; allow_with_ledger ->
                           allow plus a ledger record with rule E3-allowed. E1, E2, E4 and E5 still win.
+                          (1.5.2) Patterns are matched against the command text and against a normalised
+                          spelling of its rm and git push commands: rm with -r/-R/--recursive and -f/--force
+                          in any order, split or combined (-fr, -r -f), reads as `rm -rf`; git push with -f,
+                          --force, --force-with-lease, --force-if-includes or a +refspec reads as
+                          `git push --force`. So the default patterns stay as readable as they were.
   E4  call budget      -> deny once the session's gated-call count exceeds `max` of the
                           enforcement.rate_limits entry {action: tool_call, period: session}.
   E5  session-written  -> opt-in (enforcement.irreversible_actions.session_written_exec: deny).
@@ -55,7 +69,12 @@ an exit of 1-127 other than 2, which means this file never ran.
 Fail-closed: with a manifest present, an unreadable manifest, missing PyYAML, a misconfigured
 kill switch, hook input over MAX_INPUT_BYTES, a shell command over MAX_COMMAND_BYTES, a check that
 runs past TIME_BUDGET_S (the hooks.json timeout would otherwise kill the hook, which fails open),
-or any internal error denies with rule E0. Without a manifest the hook does nothing.
+or any internal error denies with rule E0. Without a manifest the hook does nothing, unless the project
+is already governed (1.5.2): when .claude/state/ holds a FIELD artefact (the ledger, the call counter, the
+lock, KILL) or FIELD_MANIFEST is set, a missing or unreadable manifest denies with E0 instead of
+passing every call. The default kill sentinel .claude/state/KILL is read before the manifest is, so a kill
+holds whatever the manifest says. Removing the manifest is therefore not a way out of the gate; a human
+decommissions a project by deleting .claude/state/ outside the session.
 Dependencies: PyYAML (pip install pyyaml). Without it the gate fails closed (E0).
 The call counter and the ledger chain are serialised by a per-project lock
 (.claude/state/field-gate.lock) held for the life of each hook process.
@@ -63,7 +82,8 @@ Limits: regex matching is a tripwire, not a sandbox; Read/Glob/Grep are not gate
 read shell tools: an MCP tool that runs commands gets E1/E2/E4/L, not E3/E5. E2 and E5 match
 command text, not process execution: variables, eval, globs (rm *), brace expansion, programs that
 delete without naming the target (git clean, find -delete) and files created by Bash itself
-(echo > x.sh, curl -o) are not caught; paths resolve against the project root, not the shell cwd.
+(echo > x.sh, curl -o) are not caught; paths resolve against the project root, plus the cwd in the hook input
+and any literal `cd` in the same command (not a directory held in a variable: cd "$D" && rm -r state).
 """
 import datetime
 import fnmatch
@@ -82,6 +102,10 @@ STATE_DIR = ".claude/state"
 DEFAULT_KILL = STATE_DIR + "/KILL"
 DEFAULT_LEDGER = STATE_DIR + "/field-ledger.jsonl"
 COUNTER_FILE = STATE_DIR + "/field-session-calls.json"
+LOCK_FILE = STATE_DIR + "/field-gate.lock"
+# Files under .claude/state/ that only a FIELD-governed project has (1.5.2). Any of them, or FIELD_MANIFEST
+# in the environment, means governance is expected: a missing manifest is then E0, not "nothing to do".
+STATE_ARTEFACTS = ("field-ledger.jsonl", "field-session-calls.json", "field-gate.lock", "KILL")
 FILE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 SHELL_TOOLS = ("Bash", "PowerShell")
 # Read-only tools the hook passes straight through (no manifest read, no ledger record).
@@ -458,7 +482,7 @@ def ledger_append(ledger_path, record):
 def gate_lock(root):
     """Exclusive lock held for the rest of this hook process, so parallel tool calls do not race
     on the call counter or the ledger chain. Released by the OS when the process exits."""
-    path = root / STATE_DIR / "field-gate.lock"
+    path = root / LOCK_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
     fh = open(path, "a+")
     if os.name == "nt":
@@ -683,7 +707,7 @@ def bash_e2_words(cmd, root, hits, depth=0):
     return plain, globs
 
 
-def e2_targets(tool, ti, root, hits):
+def e2_targets(tool, ti, root, hits, cwd=None):
     """(targets, globs). targets: the strings E2's regexes run on: the target path (file tools); the
     whole command plus the words bash_e2_words selects (Bash); the whole text and every token,
     quoted strings re-tokenised (PowerShell, which has no parser); every string input and its tokens
@@ -697,6 +721,11 @@ def e2_targets(tool, ti, root, hits):
         cmd = shell_command(tool, ti)
         out.append(_norm(cmd))
         toks, globs = bash_e2_words(cmd, root, hits)
+        # A `cd` earlier in the command moves where the later relative words point (cd .claude && rm -r state).
+        dirs = cd_dirs(cmd, cwd_rel(cwd, root))
+        rel = lambda t: bool(t) and not _norm(t).startswith(("/", "~", "-")) and not re.match(r"^[A-Za-z]:/", _norm(t))  # noqa: E731
+        toks = toks + [posixpath.join(d, _norm(t)) for d in dirs for t in toks if rel(t)]
+        globs = globs + [posixpath.join(d, _norm(t)) for d in dirs for t in globs if rel(t)]
     elif tool == "PowerShell":
         cmd = shell_command(tool, ti)
         out.append(_norm(cmd))
@@ -815,6 +844,161 @@ def shell_pattern_hit(tool, cmd, globs, names, root, guard=()):
     return f"destructive command aimed at {hit}" if hit else None
 
 
+def governed_by(root):
+    """Why governance is expected without a manifest, else None: FIELD_MANIFEST is set, or .claude/state/
+    holds a FIELD artefact. A project that never ran the gate has neither and stays ungoverned."""
+    if os.environ.get("FIELD_MANIFEST"):
+        return "FIELD_MANIFEST is set"
+    for name in STATE_ARTEFACTS:
+        if present(root / STATE_DIR / name):
+            return f".claude/state/{name} exists"
+    return None
+
+
+def make_event(inp, root, store_source):
+    """The fields every ledger record of this call carries."""
+    tool, ti = inp.get("tool_name", ""), inp.get("tool_input", {}) or {}
+    event = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+             "session": inp.get("session_id", "unknown"), "tool": tool,
+             "tool_use_id": inp.get("tool_use_id"),
+             "permission_mode": inp.get("permission_mode"),
+             "input_digest": hashlib.sha256(json.dumps(ti, sort_keys=True).encode()).hexdigest()[:16],
+             "store_source": store_source}
+    if tool in FILE_TOOLS:
+        event["path"] = path_key(ti.get("file_path") or ti.get("notebook_path") or "", root)
+    return event
+
+
+def early_deny(inp, root, manifest, rule, reason):
+    """Deny before the manifest has been enforced (kill sentinel; governed project with no manifest). The ledger
+    is the manifest's when it parsed, else the default one; the record is written under the gate lock."""
+    ledger_path, store_source = resolve_store(manifest if isinstance(manifest, dict) else None, root)
+    try:
+        event = make_event(inp, root, store_source)
+    except Exception:  # a malformed tool_input must not turn the deny into an allow
+        event = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), "tool": "unknown"}
+    try:
+        _lock = gate_lock(root)  # noqa: F841  (held until exit)
+    except Exception:
+        pass
+    deny(ledger_path, event, rule, reason)
+
+
+# Words that run code handed to them as text: E2 reads the whole command for protected names when one is present.
+E2_CODE_RUNNERS = re.compile(r"^(?:py|awk|gawk|mawk|lua|tclsh|osascript|eval|cmd)$")
+CODE_FALLBACK = re.compile(
+    r"(?i)(?<![\w-])(?:py|python|node|perl|ruby|php|deno|bun|pwsh|powershell|sh|bash|zsh|dash|ksh|awk|lua|eval)")
+
+
+def _runs_code_word(word):
+    b = _base(word)
+    return bool(INTERPRETER_RE.match(b) or SHELL_C.match(b) or E2_CODE_RUNNERS.match(b))
+
+
+def runs_code(cmd):
+    """True when a Bash command invokes an interpreter or evaluates a code string: python -c, node -e, perl -e,
+    ruby -e, php -r, sh -c, awk, eval, also behind a wrapper (sudo -u root python3 ...). Unparseable text counts
+    when it contains such a word."""
+    try:
+        words = _shell_words(cmd)
+    except ValueError:
+        return bool(CODE_FALLBACK.search(cmd or ""))
+    for pipe in _split(words):
+        for stage in pipe:
+            ws = [w for w, _q in stage]
+            i = _command_index(ws)
+            if i is None:
+                continue
+            if _runs_code_word(ws[i]) or (_base(ws[i]) in E2_WRAPPERS and any(_runs_code_word(w) for w in ws[i + 1:])):
+                return True
+    return False
+
+
+def cwd_rel(cwd, root):
+    """The hook input's cwd as a path relative to the project root: '' for the root itself, for no cwd, and for a
+    directory outside the project. The shell's directory persists between calls, so `cd .claude` in one call
+    and `rm -r state` in the next must still read as .claude/state."""
+    if not cwd or not isinstance(cwd, str):
+        return ""
+    a, rootn = _abs_norm(cwd, root)
+    return a[len(rootn) + 1:] if a.startswith(rootn + "/") else ""
+
+
+def cd_dirs(cmd, base="", limit=8):
+    """Directories a Bash command runs in, besides the project root: `base` (the shell's directory when the call
+    began, root-relative) and every `cd` target, each joined to the one before (cd .claude && cd state -> .claude,
+    .claude/state). A target holding a variable or command substitution is skipped."""
+    try:
+        segs = _segments(cmd)
+    except ValueError:
+        return [base] if base else []
+    out, cwd = ([base] if base else []), base
+    for seg in segs:
+        i = _command_index(seg)
+        if i is None or _base(seg[i]) not in ("cd", "pushd", "chdir"):
+            continue
+        args = [w for w in seg[i + 1:] if not w.startswith("-")]
+        if not args or "$" in args[0]:
+            continue
+        a = _norm(args[0])
+        cwd = a if (a.startswith(("/", "~")) or re.match(r"^[A-Za-z]:/", a)) else posixpath.join(cwd, a)
+        if cwd not in out:
+            out.append(cwd)
+    return out[:limit]
+
+
+def _flags(args):
+    """(single-letter flags, long-option names) among a command's arguments; stops at `--`."""
+    short, long_ = set(), set()
+    for a in args:
+        if a == "--":
+            break
+        if a.startswith("--"):
+            long_.add(a[2:].split("=", 1)[0])
+        elif re.match(r"^-[A-Za-z]+$", a):
+            short.update(a[1:])
+    return short, long_
+
+
+def _long_is(names, full, minimum=1):
+    """True when one of the long-option names is `full` or an abbreviation of it that getopt would accept."""
+    return any(n and len(n) >= minimum and full.startswith(n) for n in names)
+
+
+def e3_variants(cmd, depth=0):
+    """Canonical spellings of the rm and git push commands in a shell command, for E3 to match beside the
+    text itself: rm with a recursive flag (-r -R --recursive) and a force flag (-f --force), however spelled or
+    ordered, reads `rm -rf ARGS`; git push with -f, --force, --force-with-lease, --force-if-includes or a
+    +refspec reads `git push --force ARGS`. Command strings given to sh -c / eval are read too."""
+    try:
+        words = _shell_words(cmd)
+    except ValueError:
+        words = [(t, False) for t in re.findall(r"\S+", cmd or "")]
+    out = []
+    for pipe in _split(words):
+        for stage in pipe:
+            ws = [w for w, _q in stage]
+            for k, w in enumerate(ws):
+                b = _base(w)
+                rest = ws[k + 1:]
+                if b == "rm":
+                    short, long_ = _flags(rest)
+                    if (short & {"r", "R"} or _long_is(long_, "recursive")) and ("f" in short or _long_is(long_, "force")):
+                        out.append("rm -rf " + " ".join(a for a in rest if not a.startswith("-")))
+                elif b == "git" and "push" in rest:
+                    after = rest[rest.index("push") + 1:]
+                    short, long_ = _flags(after)
+                    if ("f" in short or _long_is(long_, "force", 2) or any(n.startswith("force-") for n in long_)
+                            or any(a.startswith("+") and len(a) > 1 for a in after if not a.startswith("-"))):
+                        out.append("git push --force " + " ".join(a.lstrip("+") for a in after if not a.startswith("-")))
+            i = _command_index(ws)
+            if i is not None and depth < 3:
+                _marked, nested = _stage_marks(stage, i, lambda _w: False)
+                for n in nested:
+                    out += e3_variants(n, depth + 1)
+    return out
+
+
 _T0 = 0.0
 
 
@@ -828,14 +1012,7 @@ def enforce(inp, manifest, root, ledger_path, store_source):
     tool = inp.get("tool_name", "")
     ti = inp.get("tool_input", {}) or {}
     session = inp.get("session_id", "unknown")
-    event = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-             "session": session, "tool": tool,
-             "tool_use_id": inp.get("tool_use_id"),
-             "permission_mode": inp.get("permission_mode"),
-             "input_digest": hashlib.sha256(json.dumps(ti, sort_keys=True).encode()).hexdigest()[:16],
-             "store_source": store_source}
-    if tool in FILE_TOOLS:
-        event["path"] = path_key(ti.get("file_path") or ti.get("notebook_path") or "", root)
+    event = make_event(inp, root, store_source)
 
     if manifest.get("_unparsed"):
         deny(ledger_path, event, "E0", f"manifest unreadable ({manifest['_unparsed']}); fail-closed")
@@ -922,7 +1099,7 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         return (any(rx.search(f) for f in _path_forms(word, root) for rx, _l in rules)
                 or (GLOB_CHARS.search(word) and glob_hit(word, names, root) is not None))
 
-    targets, globs = e2_targets(tool, ti, root, hits)
+    targets, globs = e2_targets(tool, ti, root, hits, inp.get("cwd"))
     for target in targets:
         if _overdue():
             deny(ledger_path, event, "E0", f"E2 check exceeded {TIME_BUDGET_S:g} s; fail-closed")
@@ -930,6 +1107,25 @@ def enforce(inp, manifest, root, ledger_path, store_source):
             if rx.search(target):
                 deny(ledger_path, event, "E2", f"write/touch of protected governance path matched '{label}'")
     if tool in SHELL_TOOLS:
+        text = _norm(shell_command(tool, ti))
+        if tool == "PowerShell" or runs_code(text):
+            # Interpreter and PowerShell text: protected names anywhere in it, not only as a whole word or at the
+            # end (python3 -c "os.remove('field-manifest.yaml')" ends in `')"`). The kill sentinel and the
+            # skill's field.json stay writable; a `/` or `.` after them is a longer path and not exempt.
+            ab, _r = _abs_norm(STATE_DIR, root)
+            k, _r = _abs_norm(flag, root)
+            exempt = [r"field\.json"] + ([re.escape(k[len(ab) + 1:])] if k.startswith(ab + "/") else [])
+            scrubbed = re.sub(r"\.claude/state/(?:%s)(?![\w.\-/])" % "|".join(exempt), "", text, flags=re.IGNORECASE)
+            end = r"(?![\w\-]|\.[\w\-])"  # name.example and name.bak are other files; the name followed by . ' " ) or end is the file
+            loose = [r"field-manifest\.ya?ml" + end, r"\.claude/settings[^\s'\"/]*\.json" + end, r"hooks\.json" + end,
+                     r"\.claude/state(?![\w\-])"]
+            for p in (manifest_path(root), ledger_path, counter) + tuple(x for x in (estate, stamp) if x is not None):
+                a, rootn = _abs_norm(p, root)
+                loose.append(re.escape(a[len(rootn) + 1:] if a.startswith(rootn + "/") else a) + end)
+            for pat in loose:
+                if re.search(pat, scrubbed, re.IGNORECASE):
+                    deny(ledger_path, event, "E2",
+                         f"interpreter or PowerShell command text names a protected governance path matched '{pat}'")
         reason = shell_pattern_hit(tool, shell_command(tool, ti), globs, names, root, guard)
         if reason:
             deny(ledger_path, event, "E2", reason)
@@ -946,10 +1142,11 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         if vmode not in VERDICT_MODES:
             deny(ledger_path, event, "E0", "deny_patterns_verdict must be deny or policy; fail-closed")
         pats = ia3.get("deny_patterns") or []
+        spellings = [cmd] + e3_variants(cmd)  # the text, then rm / git push in canonical spelling (see e3_variants)
         for pat in pats:
             if _overdue():
                 deny(ledger_path, event, "E0", f"E3 check exceeded {TIME_BUDGET_S:g} s; fail-closed")
-            if re.search(str(pat), cmd, re.IGNORECASE if tool == "PowerShell" else 0):
+            if any(re.search(str(pat), sp, re.IGNORECASE if tool == "PowerShell" else 0) for sp in spellings):
                 if vmode == "deny":
                     deny(ledger_path, event, "E3", f"command matched irreversible-action pattern '{pat}'")
                 policy = str(enf.get("irreversible_action_policy") or "").strip().casefold()
@@ -1056,8 +1253,16 @@ def main():
         sys.exit(0)  # read-only tool: not gated
     root = project_root(inp)
     manifest = load_manifest(manifest_path(root))
+    # The default kill sentinel is read before the manifest is enforced (or even present): a kill always holds.
+    kill = root / DEFAULT_KILL
+    if present(kill):
+        early_deny(inp, root, manifest, "E1", f"kill switch tripped ({path_key(kill, root)}); all tool calls halted")
     if manifest is None:
-        sys.exit(0)  # no manifest: not a FIELD-governed project, do nothing
+        why = governed_by(root)
+        if why is None:
+            sys.exit(0)  # no manifest and no FIELD state: not a FIELD-governed project, do nothing
+        early_deny(inp, root, manifest, "E0",
+                   f"field-manifest is missing or unreadable but this project is governed ({why}); fail-closed")
     if oversize:
         emit_deny("E0", f"hook input exceeds {MAX_INPUT_BYTES} bytes; fail-closed")
     if bad_input:
