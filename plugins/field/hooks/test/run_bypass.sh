@@ -159,6 +159,17 @@ gate_cwd "$P" src 'rm -r build';  expect "allow (cwd src): rm -r build" 0 "$RC"
 gate_cwd "$P" .claude/agents 'rm x.md'; expect "allow (cwd .claude/agents): rm x.md" 0 "$RC"
 gate_cwd "$P" "" 'rm -r build'; expect "allow (cwd is the root): rm -r build" 0 "$RC"
 
+# hardening: quoted names given to git, and git commands that remove untracked files without naming them
+P=$(proj p7)
+for c in 'git rm "field-manifest.yaml"' "git rm -f 'field-manifest.yaml'" 'git checkout -- "field-manifest.yaml"' \
+         'git restore "field-manifest.yaml"' 'git mv "field-manifest.yaml" x' 'git rm -r ".claude/state"' \
+         'git clean -fdx' 'git clean -n' 'git stash -u' 'git stash push --include-untracked' 'git stash -a'; do
+  bash_deny "E2 deny (git): $c" "$P" "$c" E2
+done
+for c in 'git status' 'git stash' 'git stash pop' 'git checkout main' 'git rm old.txt' 'git commit -m "x"'; do
+  bash_allow "E2 allow (git): $c" "$P" "$c"
+done
+
 # ---- finding 3: E3 must not depend on flag spelling ----
 P=$(proj p6)
 for c in 'rm -rf node_modules' 'rm -fr x' 'rm -Rf x' 'rm -rfv x' 'rm -vfr x' 'rm -r -f x' 'rm -f -r x' 'rm -R -f x' \

@@ -895,6 +895,30 @@ def _runs_code_word(word):
     return bool(INTERPRETER_RE.match(b) or SHELL_C.match(b) or E2_CODE_RUNNERS.match(b))
 
 
+GIT_FILE_OPS = {"rm", "mv", "checkout", "restore", "reset", "update-index", "stash", "clean"}
+
+
+def git_untracked_wipe(cmd):
+    """True for `git clean` and `git stash -u/-a/--include-untracked/--all`: they remove untracked files (an
+    untracked manifest or state directory) without naming them."""
+    try:
+        segs = _segments(cmd)
+    except ValueError:
+        return False
+    for seg in segs:
+        for k, w in enumerate(seg):
+            if _base(w) != "git":
+                continue
+            rest = seg[k + 1:]
+            if "clean" in rest:
+                return True
+            if "stash" in rest:
+                short, long_ = _flags(rest[rest.index("stash") + 1:])
+                if short & {"u", "a"} or {"include-untracked", "all"} & long_:
+                    return True
+    return False
+
+
 def runs_code(cmd):
     """True when a Bash command invokes an interpreter or evaluates a code string: python -c, node -e, perl -e,
     ruby -e, php -r, sh -c, awk, eval, also behind a wrapper (sudo -u root python3 ...). Unparseable text counts
@@ -909,6 +933,8 @@ def runs_code(cmd):
             i = _command_index(ws)
             if i is None:
                 continue
+            if _base(ws[i]) == "git" and GIT_FILE_OPS & set(ws[i + 1:]):
+                return True  # git rm "field-manifest.yaml": a quoted name is not an E2 word for git
             if _runs_code_word(ws[i]) or (_base(ws[i]) in E2_WRAPPERS and any(_runs_code_word(w) for w in ws[i + 1:])):
                 return True
     return False
@@ -1108,6 +1134,8 @@ def enforce(inp, manifest, root, ledger_path, store_source):
                 deny(ledger_path, event, "E2", f"write/touch of protected governance path matched '{label}'")
     if tool in SHELL_TOOLS:
         text = _norm(shell_command(tool, ti))
+        if tool == "Bash" and git_untracked_wipe(text):
+            deny(ledger_path, event, "E2", "git clean / git stash -u removes untracked files, governance files included")
         if tool == "PowerShell" or runs_code(text):
             # Interpreter and PowerShell text: protected names anywhere in it, not only as a whole word or at the
             # end (python3 -c "os.remove('field-manifest.yaml')" ends in `')"`). The kill sentinel and the

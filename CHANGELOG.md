@@ -41,7 +41,7 @@ Four findings from an external tester. Findings 1 to 3 were reproduced against 1
 
 - A tripwire on command text, not a sandbox, as before. Not caught: a path built at run time (`os.path.join('.claude', 'st' + 'ate')`, `chr()` arithmetic, a name read from the environment or a file), a directory held in a variable (`cd "$D" && rm -r state`), a quoted name given to a command that is neither an interpreter nor in E2's mutating list (`git rm "field-manifest.yaml"`, `rsync --delete`), and programs that delete without naming the target (`git clean`, `find -delete`).
 - A deleted ledger that the next gated call restarts is a short, valid chain and still verifies INTACT; `verify-ledger.py` has no anchor outside `.claude/state/` to compare against. 1.5.2 makes the delete harder (E2 now catches `cd`-relative and interpreter forms) and reports a missing or empty file; it does not make a restart detectable.
-- E3 canonicalises `rm` and `git push` only. `git push --delete`, `git clean -fdx`, `dd`, `truncate` are not in the default patterns and are not canonicalised.
+- E3 canonicalises `rm` and `git push` only. (Hardening in this release: E2 also reads quoted names given to `git rm|mv|checkout|restore|reset|stash|clean`, and denies `git clean` and `git stash -u/-a`, which remove untracked files without naming them.) `git push --delete`, `git clean -fdx`, `dd`, `truncate` are not in the default patterns and are not canonicalised.
 - Credit: external tester (name TBD, awaiting consent).
 
 ---
