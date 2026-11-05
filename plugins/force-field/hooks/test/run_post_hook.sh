@@ -218,7 +218,7 @@ expect "launcher, python3 / py / python all fail (9009): exit 0, no stdout" "0|"
 "$PY" - "$HERE/../hooks.json" <<'PYEOF' && expect "hooks.json registration" ok ok || expect "hooks.json registration" ok bad
 import json, sys
 h = json.load(open(sys.argv[1]))["hooks"]
-assert set(h) == {"PreToolUse", "PostToolUse"}, set(h)
+assert set(h) == {"PreToolUse", "PostToolUse", "SessionStart"}, set(h)  # SessionStart: FORCE composition (field-compose.sh)
 pre, post = h["PreToolUse"], h["PostToolUse"]
 assert len(pre) == 1 and pre[0]["matcher"] == "*" and len(pre[0]["hooks"]) == 1
 assert pre[0]["hooks"][0]["command"] == 'sh "${CLAUDE_PLUGIN_ROOT}/hooks/field-gate.sh"' and pre[0]["hooks"][0]["timeout"] == 10
