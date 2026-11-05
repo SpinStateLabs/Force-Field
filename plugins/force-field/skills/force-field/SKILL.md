@@ -7,7 +7,7 @@ description: Explain and apply the Force-Field Protocol from Spin State Labs —
 
 The Force-Field Protocol is Spin State Labs' two-layer standard for AI that is defensible in production.
 This skill is the map between the layers. It does not restate them: the full FORCE protocol lives in
-the `force` plugin and the full FIELD framework lives in the `field` plugin.
+the `force` skill and the full FIELD framework lives in the `field` skill, both in this same plugin.
 
 ## The two layers
 
@@ -39,49 +39,30 @@ time never conflict: FORCE governs each answer, FIELD governs the agent that giv
 If unsure, ask one question: "Will this run as an agent with authority to act, or is it a single
 response?" Agent → both. Single response → FORCE.
 
-## Status check — which companion plugins are present
+## Status check
 
-Run this check first whenever this skill activates, and whenever the user asks for status.
-
-1. Look at the skills and slash commands available in this session.
-   - FORCE is present if a `force` skill (often shown as `force:force`) or a `/force` command is
-     available.
-   - FIELD is present if a `field` skill (often shown as `field:field`) or a `/field` command is
-     available.
-2. Report in this format, terse, no prose:
+This plugin bundles both layers, so there is nothing to install separately. When the user asks for status:
 
 ```
 Force-Field Protocol status
-  FORCE (force plugin): PRESENT / MISSING
-  FIELD (field plugin): PRESENT / MISSING
-  Enforcement Gate: run /field status  (or: N/A — FIELD missing / hooks not loaded in claude.ai chat)
+  FORCE (force skill, /force): bundled
+  FIELD (field skill, /field): bundled
+  Enforcement Gate: run /field status  (or: N/A — hooks not loaded in claude.ai chat)
 ```
 
-Never report the Enforcement Gate as armed yourself. It is a `PreToolUse` hook shipped by the `field`
-plugin; it loads in Claude Code and Cowork, not in claude.ai chat, and it only acts when a
-`./field-manifest.yaml` exists. `/field status` is the authority on whether it is armed.
+If `force` or `field` is not listed among the available skills or commands, the plugin did not load fully:
+say so, and tell the user to reinstall the `force-field` plugin. If an older separate `force` or `field`
+plugin is still installed next to this one, tell them to remove it, or both gate hooks run.
 
-3. If either plugin is MISSING, say so plainly and give the install steps. Do not improvise the missing
-   protocol from memory; point to the companion plugin.
-
-In Claude Code:
-
-```
-/plugin marketplace add SpinStateLabs/Force-Field
-/plugin install force@force-field
-/plugin install field@force-field
-/reload-plugins
-```
-
-In claude.ai or Cowork: install `force` and `field` from the same place this plugin came from
-(Customize > Plugins). Plugin dependencies are installed automatically only by Claude Code; other
-surfaces may install this umbrella without its companions.
+Never report the Enforcement Gate as armed yourself. It is a `PreToolUse` hook; it loads in Claude Code
+and Cowork, not in claude.ai chat, and it only acts when a `./field-manifest.yaml` exists (or the project
+already holds FIELD state). `/field status` is the authority on whether it is armed.
 
 ## Apply both — workflow
 
 Use this when the user is building or reviewing an agent.
 
-1. **Status check** (above). Both plugins must be present; if not, stop and give install steps.
+1. **Status check** (above). Both skills must be listed; if not, stop and say the plugin did not load.
 2. **Set FORCE for the session.** Run `/force` to see state. For governance work the `analysis`
    preset (all five letters) is the default; `audit` suits review against source documents.
 3. **Draft the manifest with FIELD.** Run `/field init <template>` (`default`, `financial-agent`,
@@ -100,12 +81,12 @@ Use this when the user is building or reviewing an agent.
    audit-ready summary.
 6. **Hand back to the human.** Once a manifest exists, the FIELD Enforcement Gate treats it as a
    protected path in Claude Code, so later governance changes are made by the human, outside the
-   session (see the `field` plugin README).
+   session (see FIELD.md).
 
 ## Boundaries
 
-- This skill adds no commands, hooks, scripts, or MCP servers, and makes no network calls. All runtime
-  behavior comes from the companion plugins.
-- Do not duplicate or paraphrase the full FORCE protocol or FIELD framework here. Read the companion
+- This skill adds no commands, hooks, scripts, or MCP servers of its own, and makes no network calls. Runtime
+  behavior comes from the `force` and `field` parts of this plugin.
+- Do not duplicate or paraphrase the full FORCE protocol or FIELD framework here. Read the sibling
   skills (`force` → `protocol.md`; `field` → `framework.md`) when depth is needed.
 - Landing pages: https://spinstatelabs.ca/force and https://spinstatelabs.ca/field

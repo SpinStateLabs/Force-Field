@@ -1,8 +1,8 @@
 {
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "force-field",
-  "version": "1.7.2",
-  "description": "Spin State Labs · Claude Code plugin marketplace. The Force Field Protocol: FORCE (runtime prompt protocol) + FIELD (governance layer for agentic AI).",
+  "version": "2.0.0",
+  "description": "Spin State Labs · Claude Code plugin marketplace. force: the FORCE runtime prompt protocol only. force-field: FORCE + FIELD (governance for agentic AI) in one package.",
   "owner": {
     "name": "Spin State Labs",
     "email": "don@spinstatelabs.ca",
@@ -12,10 +12,17 @@
     {
       "name": "force",
       "source": "./plugins/force",
-      "description": "FORCE runtime prompt protocol. Toggle Forbid-flattery / Oppose-premise / Reference-sources / Chain-of-thought / Express-uncertainty constraints via the /force slash command.",
+      "description": "FORCE runtime prompt protocol. Toggle Forbid-flattery / Oppose-premise / Reference-sources / Chain-of-thought / Express-uncertainty constraints via the /force slash command. FORCE only: no governance hooks.",
       "version": "1.0.2",
       "category": "ai-hygiene",
-      "tags": ["force", "anti-sycophancy", "anti-hallucination", "prompt-engineering", "fp-and-a", "audit"],
+      "tags": [
+        "force",
+        "anti-sycophancy",
+        "anti-hallucination",
+        "prompt-engineering",
+        "fp-and-a",
+        "audit"
+      ],
       "author": {
         "name": "Don Hagell",
         "email": "don@spinstatelabs.ca",
@@ -23,25 +30,22 @@
       }
     },
     {
-      "name": "field",
-      "source": "./plugins/field",
-      "description": "FIELD governance framework — generate, validate, and audit FIELD manifests (Federated / Identity / Enforcement / Ledger / Delegation) for agentic AI via the /field slash command, plus the Enforcement Gate (PreToolUse hook: kill switch, protected paths, deny patterns, opt-in write-then-execute check, tool-call budget, hash-chained ledger). Design-time governance that wraps the FORCE runtime protocol.",
-      "version": "1.5.2",
-      "category": "ai-governance",
-      "tags": ["field", "ai-governance", "agentic-ai", "ai-sovereignty", "agent-harnessing", "kill-switch", "delegation", "audit"],
-      "author": {
-        "name": "Don Hagell",
-        "email": "don@spinstatelabs.ca",
-        "url": "https://spinstatelabs.ca/field"
-      }
-    },
-    {
       "name": "force-field",
       "source": "./plugins/force-field",
-      "description": "Force-Field Protocol umbrella. Installs FORCE (runtime prompt protocol) and FIELD (governance for agentic AI) as dependencies and adds a skill explaining how they compose.",
-      "version": "1.0.0",
+      "description": "Force-Field Protocol from Spin State Labs, one package: the FORCE runtime prompt protocol (/force), the FIELD governance framework (/field) with its Enforcement Gate hook (kill switch, protected paths, irreversible-action deny patterns, tool-call budget, hash-chained ledger), and a skill explaining how they compose. Replaces the separate force, field and force-field 1.x plugins.",
+      "version": "2.0.0",
       "category": "ai-governance",
-      "tags": ["force-field", "force", "field", "ai-governance", "agentic-ai", "anti-sycophancy", "audit"],
+      "tags": [
+        "force-field",
+        "force",
+        "field",
+        "ai-governance",
+        "agentic-ai",
+        "anti-sycophancy",
+        "anti-hallucination",
+        "kill-switch",
+        "audit"
+      ],
       "author": {
         "name": "Don Hagell",
         "email": "don@spinstatelabs.ca",

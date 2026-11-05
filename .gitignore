@@ -36,6 +36,6 @@ build/
 .env.*.local
 
 # FIELD Enforcement Gate smoke-test state
-plugins/field/hooks/test/.claude/
+plugins/force-field/hooks/test/.claude/
 __pycache__/
 *.pyc
