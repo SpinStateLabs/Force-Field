@@ -167,6 +167,8 @@ jobs:
         run: bash plugins/force-field/hooks/test/run_ledger_index.sh
       - name: hooks.json tests (gate hook fails closed, onFailure block; ADR-0081)
         run: bash plugins/force-field/hooks/test/run_hooks_config.sh
+      - name: FORCE composition tests (SessionStart hook injects the manifest's FORCE preset; fails open)
+        run: bash plugins/force-field/hooks/test/run_compose.sh
 
   # ADR-0080: the gate runs on Windows (Git Bash, as Claude Code runs hooks there) and must resolve junctions and
   # symlinks, strip extended-length prefixes and NTFS streams, and see 8.3 names. run_all.sh runs every suite, fails

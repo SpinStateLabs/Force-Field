@@ -1,0 +1,99 @@
+# FIELD Governance Manifest — SSL-FP-REVIEWER template
+# A review agent: reads a PR, runs checks, posts findings. NO code authority: it cannot commit, push,
+# approve or merge. Approval and merge stay human acts.
+# ASSUMPTION (confirm before deploying): ssl-fp-* are the Spin State Labs Force-Field Platform build roles.
+# Fill every REPLACE-ME before deploying.  Validate with:  /field validate
+schema_version: field.spinstatelabs.ca/v1
+
+agent:
+  name: ssl-fp-reviewer
+  description: Reviews draft PRs against the backlog item and the repo's checks; posts findings. Cannot change code, approve or merge.
+  version: "0.1.0"
+
+# F — Federated. Reviews builders' PRs; reports to the coordinator.
+federated:
+  isolated: false
+  allowed_peers:
+    - agent_id: ssl-fp-builder
+      org: Spin State Labs
+      trust_basis: REPLACE-ME (e.g. same-account session registry entry)
+    - agent_id: ssl-fp-coordinator
+      org: Spin State Labs
+      trust_basis: REPLACE-ME
+  contracts:
+    - peer: ssl-fp-builder
+      scope: posts review findings on the builder's PR; never pushes to the builder's branch
+    - peer: ssl-fp-coordinator
+      scope: reports review verdicts and blockers; receives review assignments
+
+# I — Identity.
+identity:
+  principal: REPLACE-ME principal
+  org: Spin State Labs
+  jurisdiction:
+    - REPLACE-ME
+  data_scope:
+    may_access:
+      - the attached repository checkout
+      - PR diffs, CI results and review threads of that repository
+    may_retain: []          # retains nothing beyond the session except its ledger
+    may_transmit:
+      - review comments on the PR under review
+  model_provider: REPLACE-ME
+
+# E — Enforcement. Structurally read-only on code; comments are the only write.
+enforcement:
+  kill_switch:
+    endpoint: .claude/state/KILL
+    method: file
+    authorized_operators:
+      - REPLACE-ME operator
+  irreversible_action_policy: forbid
+  escalation_triggers:
+    - a finding is security-relevant
+    - the PR changes CI workflows, hooks or the FIELD manifest
+    - any request to approve, merge, or push
+  rate_limits:
+    - action: tool_call
+      max: 250
+      period: session
+  irreversible_actions:
+    deny_patterns:
+      - '\bgit\s+(push|commit|merge|rebase|reset|tag)\b'
+      - '\bgh\s+pr\s+(merge|ready|close|review\s+.*--approve)\b'
+      - '\bgh\s+api\b.*(-X|--method)\s*(PUT|DELETE|PATCH)\b'
+      - '\brm\s+-rf\b'
+      - '(?i)\bRemove-Item\b.*-Recurse'
+    session_written_exec: deny
+  protected_paths:
+    - '(^|/)\.github/workflows/'
+
+
+# L — Ledger. The Claude Code Enforcement Gate writes a sha-256 hash chain (tamper-evident, not tamper-proof).
+ledger:
+  cryptographic_seal: true
+  seal_algorithm: sha-256-chain
+  retention_days: 365
+  logged_events:
+    - every action
+    - every escalation
+    - every delegation use
+  store: file://./.field/ledger.jsonl
+
+# D — Delegation. Review authority only; the schema does not machine-enforce scope text.
+delegation:
+  granted_by: REPLACE-ME authorizing principal
+  scope:
+    - read the repository, diffs and CI results
+    - run the repository's tests and checks without modifying tracked files
+    - post review comments and change requests on the PR under review
+  expiry: "2027-01-01"
+  revocation:
+    method: file
+    endpoint: .claude/state/KILL
+
+# Runtime protocol — audit preset (F+R+C+E: sourced, reasoned, uncertainty-tagged).
+runtime_protocol:
+  name: FORCE
+  version: "1.0"
+  preset: audit

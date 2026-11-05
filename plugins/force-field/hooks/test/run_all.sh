@@ -7,14 +7,14 @@
 #   must equal the allowlist for this platform (skip-allowlist-windows.txt, or skip-allowlist-posix.txt when that
 #   file exists; a missing file means no SKIP is allowed). A SKIP that is not listed fails, and so does a listed
 #   SKIP that no longer appears (a stale allowlist hides a test that came back or went away);
-# - the launcher and the post hook, field-gate.sh and field-post.sh, must contain no carriage return: a CRLF
+# - the launcher and the post hook, field-gate.sh, field-post.sh and field-compose.sh, must contain no carriage return: a CRLF
 #   checkout is a syntax error under sh, exit 2, which blocks every gated call.
 # Lines starting "N/A" are cases that do not exist on the platform; they are listed too, for the record.
 set -u
 cd "$(dirname "$0")"
 HERE="$PWD"
 case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) plat=windows;; *) plat=posix;; esac
-SUITES=${SUITES:-"run.sh run_e5.sh run_launcher.sh run_e3_policy.sh run_estate_kill.sh run_post_hook.sh run_links.sh run_shell_forms.sh run_ledger_index.sh run_hooks_config.sh run_bypass.sh"}   # SUITES=... narrows a trial run
+SUITES=${SUITES:-"run.sh run_e5.sh run_launcher.sh run_e3_policy.sh run_estate_kill.sh run_post_hook.sh run_links.sh run_shell_forms.sh run_ledger_index.sh run_hooks_config.sh run_bypass.sh run_compose.sh"}   # SUITES=... narrows a trial run
 OUT=$(mktemp -d); trap 'rm -rf "$OUT"' EXIT
 fail=0
 echo "platform: $plat   bash: ${BASH_VERSION}   python3: $(python3 --version 2>&1)   PyYAML: $(python3 -c 'import yaml;print(yaml.__version__)' 2>&1)"
@@ -51,7 +51,7 @@ else
 fi
 
 echo "--- line endings ---"
-for f in ../field-gate.sh ../field-post.sh; do
+for f in ../field-gate.sh ../field-post.sh ../field-compose.sh; do
   # tr, not grep: grep on Git Bash for Windows reads CRLF as LF and would never see the CR
   n=$(tr -cd '\r' < "$f" | wc -c | tr -d ' ')
   if [ "$n" != 0 ]; then fail=1; echo "FAIL  $f contains $n carriage return(s) (CRLF checkout)"; else echo "PASS  $f has no carriage return"; fi
