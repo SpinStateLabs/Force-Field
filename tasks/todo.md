@@ -1,12 +1,9 @@
 # ssl-fp-builder-1 plan (odd items of ROADMAP.md "Enforcement Gate v1.2")
 
-Numbering (approved by Don): 1 policy-driven verdicts, 2 local_sentinel (+call counter),
-3 FORCE+FIELD runtime composition, 4 ledger reference implementations... see note.
+Numbering (approved by Don) = ROADMAP.md bullet order:
 Order is ROADMAP.md bullet order: 1 Policy verdicts | 2 local_sentinel | 3 FORCE+FIELD composition |
 4 Ledger reference impls | 5 Additional FIELD templates | 6 n8n reference enforcement.
 Builder-1 = 1, 3, 5. Builder-2 = 2, 4, 6.
-
-NOTE: the bullet list has the "locked call counter" parenthetical on bullet 2; ledger refs are bullet 4.
 
 ## Status at HEAD 4a382bc (verified by grep of CHANGELOG.md, manifest-schema.json, field-gate.py, hooks.json)
 - [x] 1 Policy-driven verdicts: ALREADY BUILT (schema 1.3.0 deny_patterns_verdict, gate E3 ask/allow-with-ledger, run_e3_policy.sh). No work; ROADMAP.md is stale.
