@@ -96,6 +96,15 @@ ADR-0081 (`docs/adr/ADR-0081-gate-hook-fail-closed.md`). `plugins/field/hooks/ho
 
 ---
 
+## force-field — 2.0.0 / marketplace — 2.0.0 — 2026-11-05
+
+### Changed
+
+- **One plugin instead of three.** `force` (1.0.2), `field` (1.5.2) and the `force-field` umbrella (1.0.0) are now one plugin, `force-field`, with three skills (`force`, `field`, `force-field`), the `/force` and `/field` commands, and the FIELD Enforcement Gate hooks. The marketplace lists only `force-field`. The umbrella no longer declares dependencies. Sources moved with `git mv`: `plugins/field/*` and `plugins/force/*` are now under `plugins/force-field/` (the gate tests are at `plugins/force-field/hooks/test/`); their READMEs are `FIELD.md` and `FORCE.md`. Gate code is unchanged from field 1.5.2.
+- **Migration.** Remove the old `force`, `field` and `force-field` 1.x installs, then install `force-field@force-field`. With an old `field` left installed, the gate hook runs twice. The Anthropic directory entries that point at `plugins/force` and `plugins/field` no longer have a plugin at that path; keep the entry that points at `plugins/force-field`.
+
+---
+
 ## field — 1.5.2 / marketplace — 1.7.2 — 2026-11-04
 
 Four findings from an external tester. Findings 1 to 3 were reproduced against 1.5.1 before they were fixed (finding 4 could not be: no bash 3.2 was available); each has a regression test in `hooks/test/run_bypass.sh` or, for finding 4, a changed line in `run_e5.sh`.

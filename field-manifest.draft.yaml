@@ -67,7 +67,7 @@ enforcement:
     - '(^|/)LICENSE$'
     - '(^|/)\.github/workflows/'
 
-# L — Ledger. Local hash chain written by the gate; verify with plugins/field/hooks/verify-ledger.py.
+# L — Ledger. Local hash chain written by the gate; verify with plugins/force-field/hooks/verify-ledger.py.
 ledger:
   cryptographic_seal: true
   seal_algorithm: sha-256-chain

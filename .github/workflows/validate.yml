@@ -27,12 +27,12 @@ jobs:
 
       - name: Validate shipped manifests against the FIELD schema
         run: |
-          schema=plugins/field/skills/field/manifest-schema.json
-          for f in plugins/field/skills/field/templates/*.yaml plugins/field/hooks/test/field-manifest.yaml field-manifest.draft.yaml; do
+          schema=plugins/force-field/skills/field/manifest-schema.json
+          for f in plugins/force-field/skills/field/templates/*.yaml plugins/force-field/hooks/test/field-manifest.yaml field-manifest.draft.yaml; do
             npx ajv validate --spec=draft2020 -c ajv-formats -s "$schema" -d "$f" || exit 1
           done
           # Negative case: the step must be able to fail. An unknown enforcement key is invalid.
-          sed 's/^enforcement:$/enforcement:\n  not_a_field_key: true/' plugins/field/skills/field/templates/field-manifest-default.yaml > "$RUNNER_TEMP/bad.yaml"
+          sed 's/^enforcement:$/enforcement:\n  not_a_field_key: true/' plugins/force-field/skills/field/templates/field-manifest-default.yaml > "$RUNNER_TEMP/bad.yaml"
           grep -q '^  not_a_field_key: true$' "$RUNNER_TEMP/bad.yaml" || { echo "negative case not constructed"; exit 1; }
           if npx ajv validate --spec=draft2020 -c ajv-formats -s "$schema" -d "$RUNNER_TEMP/bad.yaml"; then
             echo "schema accepted an unknown enforcement key"; exit 1
@@ -40,8 +40,8 @@ jobs:
 
       - name: Validate the deny_patterns_verdict key (positive and negative)
         run: |
-          schema=plugins/field/skills/field/manifest-schema.json
-          fixture=plugins/field/hooks/test/field-manifest.yaml
+          schema=plugins/force-field/skills/field/manifest-schema.json
+          fixture=plugins/force-field/hooks/test/field-manifest.yaml
           sed 's/^  irreversible_actions:\(.*\)$/  irreversible_actions:\1\n    deny_patterns_verdict: policy/' "$fixture" > "$RUNNER_TEMP/verdict-ok.yaml"
           grep -q '^    deny_patterns_verdict: policy$' "$RUNNER_TEMP/verdict-ok.yaml" || { echo "positive case not constructed"; exit 1; }
           npx ajv validate --spec=draft2020 -c ajv-formats -s "$schema" -d "$RUNNER_TEMP/verdict-ok.yaml" || exit 1
@@ -53,8 +53,8 @@ jobs:
 
       - name: Validate the kill_switch local_sentinel keys (positive and negative)
         run: |
-          schema=plugins/field/skills/field/manifest-schema.json
-          fixture=plugins/field/hooks/test/field-manifest.yaml
+          schema=plugins/force-field/skills/field/manifest-schema.json
+          fixture=plugins/force-field/hooks/test/field-manifest.yaml
           sed 's/^    method: file$/    method: file\n    local_sentinel: .claude\/state\/ESTATE_KILL\n    sentinel_max_age_s: 30/' "$fixture" > "$RUNNER_TEMP/sentinel-ok.yaml"
           grep -q '^    sentinel_max_age_s: 30$' "$RUNNER_TEMP/sentinel-ok.yaml" || { echo "positive case not constructed"; exit 1; }
           npx ajv validate --spec=draft2020 -c ajv-formats -s "$schema" -d "$RUNNER_TEMP/sentinel-ok.yaml" || exit 1
@@ -146,27 +146,27 @@ jobs:
         run: pip install pyyaml
       - name: Smoke test (E1-E4, L)
         run: |
-          out=$(bash plugins/field/hooks/test/run.sh)
+          out=$(bash plugins/force-field/hooks/test/run.sh)
           echo "$out"
           echo "$out" | grep -q "LEDGER INTACT"
       - name: E5 and ledger-path tests
-        run: bash plugins/field/hooks/test/run_e5.sh
+        run: bash plugins/force-field/hooks/test/run_e5.sh
       - name: Launcher tests (no Python, stub Python, fallbacks)
-        run: bash plugins/field/hooks/test/run_launcher.sh
+        run: bash plugins/force-field/hooks/test/run_launcher.sh
       - name: E3 policy-verdict tests (ADR-0071)
-        run: bash plugins/field/hooks/test/run_e3_policy.sh
+        run: bash plugins/force-field/hooks/test/run_e3_policy.sh
       - name: Estate kill sentinel tests (ADR-0072)
-        run: bash plugins/field/hooks/test/run_estate_kill.sh
+        run: bash plugins/force-field/hooks/test/run_estate_kill.sh
       - name: PostToolUse evidence-hook tests (ADR-0075 part (a))
-        run: bash plugins/field/hooks/test/run_post_hook.sh
+        run: bash plugins/force-field/hooks/test/run_post_hook.sh
       - name: Link tests (symlinks, ADR-0080)
-        run: bash plugins/field/hooks/test/run_links.sh
+        run: bash plugins/force-field/hooks/test/run_links.sh
       - name: Shell-form tests (cmd /c, colon-bound parameters, link globs; PR 15)
-        run: bash plugins/field/hooks/test/run_shell_forms.sh
+        run: bash plugins/force-field/hooks/test/run_shell_forms.sh
       - name: Incremental ledger index tests (differential against the old code, sidecar attacks)
-        run: bash plugins/field/hooks/test/run_ledger_index.sh
+        run: bash plugins/force-field/hooks/test/run_ledger_index.sh
       - name: hooks.json tests (gate hook fails closed, onFailure block; ADR-0081)
-        run: bash plugins/field/hooks/test/run_hooks_config.sh
+        run: bash plugins/force-field/hooks/test/run_hooks_config.sh
 
   # ADR-0080: the gate runs on Windows (Git Bash, as Claude Code runs hooks there) and must resolve junctions and
   # symlinks, strip extended-length prefixes and NTFS streams, and see 8.3 names. run_all.sh runs every suite, fails
@@ -198,4 +198,4 @@ jobs:
           which -a python3; python3 --version; python3 -c 'import yaml, sys; print("PyYAML", yaml.__version__, sys.executable)'
           git config --show-origin core.autocrlf || echo "core.autocrlf unset"
       - name: Run every gate suite (SKIPs must equal the allowlist; no CR in the launcher)
-        run: bash plugins/field/hooks/test/run_all.sh
+        run: bash plugins/force-field/hooks/test/run_all.sh

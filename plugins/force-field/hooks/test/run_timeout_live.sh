@@ -7,12 +7,12 @@
 #
 # Each case runs `claude -p --plugin-dir <dir>` from a fresh, empty project directory (no field-manifest.yaml, so an
 # installed copy of the gate, if the user has one, finds no manifest and allows; it cannot block or mask a case):
-#   A  a copy of plugins/field whose hooks/field-gate.sh sleeps 20 s (past the 10 s timeout), hooks.json verbatim:
+#   A  a copy of plugins/force-field whose hooks/field-gate.sh sleeps 20 s (past the 10 s timeout), hooks.json verbatim:
 #      the shell call (Bash or PowerShell tool) must be BLOCKED (its tool_result is an error, no tool_result shows the
 #      echo's output);
 #   B  CONTROL: the same copy with "onFailure" removed from its hooks.json: the call must go through, which shows the
 #      key is what blocks and that a plugin without it fails open on this build;
-#   C  SANITY: this branch's plugins/field unmodified (the real gate): the call goes through and the run completes.
+#   C  SANITY: this branch's plugins/force-field unmodified (the real gate): the call goes through and the run completes.
 # The stub writes a marker line when it starts, so A and B prove the stub hook actually ran.
 # Windows: hooks must run under Git Bash for B to mean anything. Without Git Bash, Claude Code runs the hook in
 # PowerShell and (2.1.299 and later) blocks a failed PreToolUse hook that sets no "shell" whatever onFailure says, so B
@@ -29,7 +29,7 @@ set -u
 LC_NUMERIC=C   # EPOCHREALTIME with a '.' decimal point (not exported: the child keeps the caller's locale)
 cd "$(dirname "$0")"
 HERE="$PWD"
-SRC=$(cd "$HERE/../.." && pwd)   # plugins/field of this checkout
+SRC=$(cd "$HERE/../.." && pwd)   # plugins/force-field of this checkout
 MIN=2.1.295
 MODEL=${FIELD_LIVE_MODEL:-sonnet}
 CASES=${FIELD_LIVE_CASES:-A B C}
@@ -78,7 +78,7 @@ WORK=$(mktemp -d "$base/field-live.XXXXXX")
 OUT=${FIELD_LIVE_OUT:-$WORK/out}; mkdir -p "$OUT"
 echo "claude $v ($(printf %s "$auth" | cut -d' ' -f2)), model $MODEL; Git Bash for hooks: $GITBASH; transcripts: $(native "$OUT")"
 
-# plugin <name> -> a copy of plugins/field whose gate launcher is a stub that never answers inside the timeout
+# plugin <name> -> a copy of plugins/force-field whose gate launcher is a stub that never answers inside the timeout
 plugin() {
   local d="$WORK/$1"
   cp -R "$SRC" "$d" && rm -rf "$d/hooks/test"

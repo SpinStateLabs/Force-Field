@@ -52,7 +52,7 @@ runs hooks in PowerShell, `sh` does not start, and nothing is enforced: install 
 
 ## Method B — Bash installer (macOS / Linux / WSL)
 
-From this plugin directory (`plugins/field/`):
+From this plugin directory (`plugins/force-field/`):
 
 ```bash
 # User-level (default, all projects)
@@ -68,7 +68,7 @@ Skill and command files refresh on every run; `~/.claude/state/field.json` is pr
 
 ## Method C — PowerShell installer (Windows)
 
-From this plugin directory (`plugins/field/`):
+From this plugin directory (`plugins/force-field/`):
 
 ```powershell
 # User-level (default)
