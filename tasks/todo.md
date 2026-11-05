@@ -4,8 +4,7 @@ Source backlog (principal's choice): ROADMAP.md "Enforcement Gate v1.2" bullets;
 Constraint (plugin-agent.md): no push, tag, release or portal action without an explicit "go" in chat;
 do not edit LICENSE, CI workflows, the FIELD manifest or `.claude/state/`.
 
-- [x] 2. `kill_switch.local_sentinel` -- already implemented (ADR-0072, schema 1.4.0). ROADMAP.md is stale; wording fix is a
-      proposal only (not applied).
+- [x] 2. `kill_switch.local_sentinel` -- already implemented (ADR-0072, schema 1.4.0). ROADMAP.md wording fixed on this branch (principal approved "apply", 2026-11-05).
 - [x] 4. Ledger reference implementation -- `plugins/force-field/ledger/` (ledger_ship.py, schema.sql, README.md) and
       `plugins/force-field/hooks/test/test_ledger_ship.py`. Principal "go" 2026-11-05: build, scoped to tested sinks.
 - [ ] 6. n8n reference runtime -- DEFERRED by the principal (2026-11-05).

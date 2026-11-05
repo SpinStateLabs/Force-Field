@@ -88,7 +88,7 @@ Two complementary layers, two plugins, one marketplace. **Both shipped.**
 
 ```
 /plugin marketplace add SpinStateLabs/Force-Field
-/plugin install field@force-field
+/plugin install force-field@force-field   # force-field 2.0.0+ (FIELD bundled with FORCE); the separate `field` plugin was merged into it
 ```
 
 ### What v1.0 includes
@@ -157,12 +157,12 @@ The public commitment in v1.0 was "enforcement in v1.1". v1.1 delivers it inside
 
 ## 🔜 What's next
 
-### Enforcement Gate v1.2 (next plugin release)
+### Enforcement Gate v1.2 (remaining items; shipped items struck through)
 
-- **Policy-driven verdicts** — `irreversible_action_policy` → deny / ask / allow-with-ledger.
-- **A `kill_switch.local_sentinel`** alongside an estate endpoint. (The locked call counter shipped in 1.2.0.)
+- ~~**Policy-driven verdicts**~~ — shipped in field 1.3.0 (2026-10-21, ADR-0071): opt-in `deny_patterns_verdict: policy`; see CHANGELOG.
+- ~~**A `kill_switch.local_sentinel`**~~ — shipped in field 1.4.0 (2026-10-21, ADR-0072). (The locked call counter shipped in 1.2.0.)
 - **FORCE + FIELD runtime composition** — automatic FORCE application inside FIELD-declared agents.
-- **Ledger reference implementations** — sample stores (s3, Postgres) with cryptographic sealing wired.
+- **Ledger reference implementations** — in review (PR #20): `ledger/ledger_ship.py` ships the ledger to dir, S3 or Postgres sinks with HMAC sealing. Tested against moto and local Postgres 16, not live S3.
 - **Additional FIELD templates** — for agents Spin State clients ask about.
 - **Reference runtime enforcement in n8n** (possible) — a sample workflow that reads a FIELD manifest and applies its constraints outside Claude Code.
 
@@ -200,4 +200,4 @@ Not committed. On the radar once FORCE + FIELD have production validation:
 
 ---
 
-*Spin State Labs · Force Field Protocol Roadmap v2.2 · Updated September 2026*
+*Spin State Labs · Force Field Protocol Roadmap v2.2 · Updated November 2026*
