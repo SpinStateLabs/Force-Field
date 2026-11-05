@@ -78,7 +78,7 @@ When the user types `/field` followed by any argument, follow `commands/field.md
 | `/field on` | Master ON — skill will proactively assist with agent design |
 | `/field off` | Master OFF — skill only responds to explicit invocation |
 | `/field init` | Create a new field-manifest.yaml in cwd from the preferred template |
-| `/field init <template>` | Use a specific template: `default`, `financial-agent`, `read-only-agent`, `client-facing-agent` |
+| `/field init <template>` | Use a specific template: `default`, `financial-agent`, `read-only-agent`, `client-facing-agent`, `ssl-fp-builder`, `ssl-fp-reviewer`, `ssl-fp-coordinator` |
 | `/field validate` | Check current manifest against `manifest-schema.json`. Report gaps. |
 | `/field assess` | Walk through FIELD compliance evaluation, five letters at a time |
 | `/field audit` | Generate an audit-ready summary of the manifest for external review |
@@ -93,7 +93,7 @@ Always confirm the new state to the user in this format:
 ```
 FIELD state [~/.claude/state/field.json]
   Master: ON / OFF
-  Preferred template: <default | financial-agent | read-only-agent | client-facing-agent>
+  Preferred template: <default | financial-agent | read-only-agent | client-facing-agent | ssl-fp-builder | ssl-fp-reviewer | ssl-fp-coordinator>
   Working manifest: <path or "none">
   Last audit: <ISO timestamp or "never">
   Updated: <ISO 8601 timestamp>
@@ -185,7 +185,7 @@ Be terse. The user is auditing, not reading prose. After an audit, update `last_
 
 ## Templates
 
-Four bootstrap templates ship with this skill in `templates/`:
+Seven bootstrap templates ship with this skill in `templates/`:
 
 | Template | Use case |
 |---|---|
@@ -193,6 +193,9 @@ Four bootstrap templates ship with this skill in `templates/`:
 | `financial-agent` | FP&A / audit-adjacent work. 7-year ledger retention. Cryptographic sealing required. Kill switch tied to spend cap. |
 | `read-only-agent` | Retrieval / analysis. Zero write scope. No delegation of write actions. Reduced enforcement surface. |
 | `client-facing-agent` | Draft-only outbound. Human review at every escalation. No autonomous send. |
+| `ssl-fp-builder` | Coding agent on its own branch; opens draft PRs; cannot merge, tag, force-push or touch the default branch. |
+| `ssl-fp-reviewer` | Read-only review agent; posts findings; cannot commit, push, approve or merge. |
+| `ssl-fp-coordinator` | Orchestration hub; writes plans under `tasks/`, assigns work to builders and reviews; cannot merge. |
 
 Pick with `/field init <template>`.
 
@@ -230,6 +233,7 @@ For the full framework, methodology, and reference architectures, see [spinstate
 - `templates/field-manifest-financial-agent.yaml` — FP&A / audit preset.
 - `templates/field-manifest-read-only-agent.yaml` — Retrieval / read-only preset.
 - `templates/field-manifest-client-facing-agent.yaml` — Draft-only outbound preset.
+- `templates/field-manifest-ssl-fp-builder.yaml`, `-ssl-fp-reviewer.yaml`, `-ssl-fp-coordinator.yaml` — Force-Field Platform build roles (federated, peers declared).
 
 ## Companion command (separate file in the plugin)
 

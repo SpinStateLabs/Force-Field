@@ -1,0 +1,104 @@
+# FIELD Governance Manifest — SSL-FP-COORDINATOR template
+# An orchestration agent: splits a backlog between builders, assigns reviews, tracks status. It writes plans
+# and messages, not product code, and cannot merge. Spawning sessions is the largest authority it holds, so
+# the spawn budget and escalation rules below are the main brakes.
+# ASSUMPTION (confirm before deploying): ssl-fp-* are the Spin State Labs Force-Field Platform build roles.
+# Fill every REPLACE-ME before deploying.  Validate with:  /field validate
+schema_version: field.spinstatelabs.ca/v1
+
+agent:
+  name: ssl-fp-coordinator
+  description: Splits backlog work between builders, assigns reviews, tracks status and reports to the principal. Writes plans, not product code. Cannot merge.
+  version: "0.1.0"
+
+# F — Federated. Hub for the builders and the reviewer.
+federated:
+  isolated: false
+  allowed_peers:
+    - agent_id: ssl-fp-builder
+      org: Spin State Labs
+      trust_basis: REPLACE-ME (e.g. same-account session registry entry)
+    - agent_id: ssl-fp-reviewer
+      org: Spin State Labs
+      trust_basis: REPLACE-ME
+  contracts:
+    - peer: ssl-fp-builder
+      scope: assigns work items and slice boundaries; receives status; grants no authority beyond the builder's own delegation
+    - peer: ssl-fp-reviewer
+      scope: assigns PRs for review; receives verdicts
+
+# I — Identity.
+identity:
+  principal: REPLACE-ME principal
+  org: Spin State Labs
+  jurisdiction:
+    - REPLACE-ME
+  data_scope:
+    may_access:
+      - the attached repository checkout and its backlog documents
+      - session status and PR state of the sessions it coordinates
+    may_retain:
+      - the coordination plan (tasks/)
+    may_transmit:
+      - assignments and status messages to ssl-fp-builder and ssl-fp-reviewer sessions
+  model_provider: REPLACE-ME
+
+# E — Enforcement. Hub authority is what to brake: spawning and instructing other agents.
+enforcement:
+  kill_switch:
+    endpoint: .claude/state/KILL
+    method: file
+    authorized_operators:
+      - REPLACE-ME operator
+  irreversible_action_policy: require_human_approval
+  escalation_triggers:
+    - the backlog is missing, ambiguous or unnumbered
+    - two builders' slices touch the same files
+    - a builder or reviewer reports a blocker or a security finding
+    - any request to merge, release, archive a session or grant a peer more authority
+  rate_limits:
+    - action: tool_call
+      max: 300
+      period: session
+  # spend_cap is not set: the gate meters tool calls only. Bound spawned sessions in the host (REPLACE-ME limit).
+  irreversible_actions:
+    deny_patterns:
+      - '\bgit\s+push\b'
+      - '\bgh\s+pr\s+(merge|ready)\b'
+      - '\brm\s+-rf\b'
+      - '(?i)\bRemove-Item\b.*-Recurse'
+    session_written_exec: deny
+  protected_paths:
+    - '(^|/)\.github/workflows/'
+
+
+# L — Ledger. The Claude Code Enforcement Gate writes a sha-256 hash chain (tamper-evident, not tamper-proof).
+ledger:
+  cryptographic_seal: true
+  seal_algorithm: sha-256-chain
+  retention_days: 365
+  logged_events:
+    - every action
+    - every escalation
+    - every delegation use
+  store: file://./.field/ledger.jsonl
+
+# D — Delegation. Coordination authority only; the schema does not machine-enforce scope text.
+# NOTE: editing product code is outside this scope, but only the operator can keep it so.
+delegation:
+  granted_by: REPLACE-ME authorizing principal
+  scope:
+    - read the repository and backlog
+    - write coordination plans under tasks/
+    - assign work items to ssl-fp-builder sessions and PRs to ssl-fp-reviewer sessions
+    - report status to the principal
+  expiry: "2027-01-01"
+  revocation:
+    method: file
+    endpoint: .claude/state/KILL
+
+# Runtime protocol — analysis preset (full FORCE).
+runtime_protocol:
+  name: FORCE
+  version: "1.0"
+  preset: analysis

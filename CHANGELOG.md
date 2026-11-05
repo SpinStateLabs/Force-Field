@@ -8,6 +8,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## [Unreleased]
 
+### Added (templates; ROADMAP "Enforcement Gate v1.2" item 5; not yet released, no version bump)
+
+- Three FIELD templates for the Force-Field Platform build roles: `ssl-fp-builder`, `ssl-fp-reviewer`, `ssl-fp-coordinator` (`skills/field/templates/`). Federated (peers and contracts declared), E3 deny patterns on, E5 on, `.github/workflows/` protected, hash-chain ledger, FORCE presets analysis / audit / analysis. None can merge; the builder pushes only its own branch; the reviewer cannot commit, push or approve.
+- Schema unchanged. They validate against `manifest-schema.json` and the CI template loop picks them up. `REPLACE-ME` values remain for the operator. Role definitions are assumptions from the names, flagged in each file's header; delegation `scope` text is not machine-enforced.
+
 ### Added (FORCE + FIELD runtime composition; ROADMAP "Enforcement Gate v1.2" item 3; not yet released, no version bump)
 
 - **`SessionStart` hook `hooks/field-compose.sh` / `field-compose.py`.** When the project's `field-manifest.yaml` declares `runtime_protocol: {name: FORCE, preset: analysis|brainstorm|draft|audit}`, the hook injects that preset's FORCE blocks (`skills/force/protocol.md`; presets as in `protocol-defaults.json`) into the session as `additionalContext`. Previously the declaration was not wired to anything.
