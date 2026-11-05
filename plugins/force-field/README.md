@@ -9,8 +9,10 @@ The **Force-Field Protocol** from Spin State Labs, in one package with three ski
   manifest templates, and the **Enforcement Gate** hook. See [FIELD.md](FIELD.md) and [INSTALL.md](INSTALL.md).
 - **force-field** explains how they compose, with an "apply both" workflow.
 
-2.0.0 replaces the separate `force` (1.0.2), `field` (1.5.2) and `force-field` (1.0.0) plugins. Remove those
-before updating: with an old `field` still installed, the gate hook runs twice.
+2.0.0 replaces the separate `field` (1.5.2) and `force-field` (1.0.0) plugins and includes FORCE. Remove the old
+`field` before updating: with it still installed, the gate hook runs twice. The marketplace also lists `force`
+(FORCE only, no governance hooks) for people who want just that; install `force` or `force-field`, not both, or
+`/force` is defined twice.
 
 ## Install
 

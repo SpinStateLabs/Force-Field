@@ -2,13 +2,33 @@
   "$schema": "https://json.schemastore.org/claude-code-marketplace.json",
   "name": "force-field",
   "version": "2.0.0",
-  "description": "Spin State Labs · Claude Code plugin marketplace. The Force-Field Protocol in one package: FORCE (runtime prompt protocol) + FIELD (governance layer for agentic AI).",
+  "description": "Spin State Labs · Claude Code plugin marketplace. force: the FORCE runtime prompt protocol only. force-field: FORCE + FIELD (governance for agentic AI) in one package.",
   "owner": {
     "name": "Spin State Labs",
     "email": "don@spinstatelabs.ca",
     "url": "https://spinstatelabs.ca"
   },
   "plugins": [
+    {
+      "name": "force",
+      "source": "./plugins/force",
+      "description": "FORCE runtime prompt protocol. Toggle Forbid-flattery / Oppose-premise / Reference-sources / Chain-of-thought / Express-uncertainty constraints via the /force slash command. FORCE only: no governance hooks.",
+      "version": "1.0.2",
+      "category": "ai-hygiene",
+      "tags": [
+        "force",
+        "anti-sycophancy",
+        "anti-hallucination",
+        "prompt-engineering",
+        "fp-and-a",
+        "audit"
+      ],
+      "author": {
+        "name": "Don Hagell",
+        "email": "don@spinstatelabs.ca",
+        "url": "https://spinstatelabs.ca/force"
+      }
+    },
     {
       "name": "force-field",
       "source": "./plugins/force-field",
