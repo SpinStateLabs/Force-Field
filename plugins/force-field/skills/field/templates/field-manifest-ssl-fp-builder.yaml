@@ -1,0 +1,106 @@
+# FIELD Governance Manifest — SSL-FP-BUILDER template
+# A coding agent that implements an assigned slice of a backlog on its OWN branch and opens a DRAFT PR.
+# It never merges, never touches the default branch, never force-pushes. Merge is a human act.
+# ASSUMPTION (confirm before deploying): ssl-fp-* are the Spin State Labs Force-Field Platform build roles:
+# builder (this), reviewer, coordinator. Peer ids below are placeholders for those agents.
+# Fill every REPLACE-ME before deploying.  Validate with:  /field validate
+schema_version: field.spinstatelabs.ca/v1
+
+agent:
+  name: ssl-fp-builder
+  description: Implements an assigned backlog slice on its own branch, tests it, and opens a draft PR. Cannot merge.
+  version: "0.1.0"
+
+# F — Federated. Takes assignments from the coordinator, hands work to the reviewer. Same org.
+federated:
+  isolated: false
+  allowed_peers:
+    - agent_id: ssl-fp-coordinator
+      org: Spin State Labs
+      trust_basis: REPLACE-ME (e.g. same-account session registry entry)
+    - agent_id: ssl-fp-reviewer
+      org: Spin State Labs
+      trust_basis: REPLACE-ME
+  contracts:
+    - peer: ssl-fp-coordinator
+      scope: receives work items and slice boundaries; reports status and blockers; never receives authority to merge
+    - peer: ssl-fp-reviewer
+      scope: its draft PR is reviewed; it addresses review comments; it does not review its own work
+
+# I — Identity. Acts for the repo owner, limited to the repositories attached to the session.
+identity:
+  principal: REPLACE-ME principal (e.g. the CTO who assigned the slice)
+  org: Spin State Labs
+  jurisdiction:
+    - REPLACE-ME            # e.g. PIPEDA
+  data_scope:
+    may_access:
+      - the attached repository checkout
+      - the PR, CI and review state of that repository
+    may_retain:
+      - its own branch, tasks/todo.md and tasks/lessons.md
+    may_transmit:
+      - commits to its own branch; its own draft PR
+  model_provider: REPLACE-ME
+
+# E — Enforcement. Brakes and rails.
+enforcement:
+  kill_switch:
+    endpoint: .claude/state/KILL
+    method: file
+    authorized_operators:
+      - REPLACE-ME operator
+  irreversible_action_policy: require_human_approval   # forbid | require_human_approval | allow_with_ledger
+  escalation_triggers:
+    - a backlog item is ambiguous, already built, or overlaps another builder's slice
+    - a change would touch files outside the assigned slice
+    - CI is red for a reason outside the change
+    - any request to merge, release, tag or push to the default branch
+  rate_limits:
+    - action: tool_call
+      max: 400
+      period: session
+  irreversible_actions:      # Bash commands matching these Python regexes are denied outright
+    deny_patterns:
+      - '\bgit\s+push\s+.*(--force|-f\b|--force-with-lease)'
+      - '\bgit\s+push\s+\S+\s+(HEAD:)?(main|master)\b'
+      - '\bgit\s+push\s+.*--delete\b'
+      - '\bgh\s+pr\s+merge\b'
+      - '\bgit\s+tag\b'
+      - '\brm\s+-rf\b'
+      - '(?i)\bRemove-Item\b.*-Recurse'
+    session_written_exec: deny   # E5: deny running a file this session wrote (field 1.2+)
+  protected_paths:             # in addition to the built-ins (manifest, ledger, .claude/settings*.json, hooks)
+    - '(^|/)\.github/workflows/'
+
+
+# L — Ledger. The Claude Code Enforcement Gate writes a sha-256 hash chain (tamper-evident, not tamper-proof).
+ledger:
+  cryptographic_seal: true
+  seal_algorithm: sha-256-chain
+  retention_days: 365
+  logged_events:
+    - every action
+    - every escalation
+    - every delegation use
+  store: file://./.field/ledger.jsonl
+
+# D — Delegation. Authority granted by the principal; the schema does not machine-enforce scope text.
+delegation:
+  granted_by: REPLACE-ME authorizing principal
+  scope:
+    - read the repository and backlog
+    - edit files inside the assigned slice
+    - run the repository's tests and checks
+    - commit and push to the branch ssl-fp-builder-<n> only
+    - open and update a draft PR from that branch
+  expiry: "2027-01-01"
+  revocation:
+    method: file
+    endpoint: .claude/state/KILL
+
+# Runtime protocol — analysis preset (full FORCE).
+runtime_protocol:
+  name: FORCE
+  version: "1.0"
+  preset: analysis

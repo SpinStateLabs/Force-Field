@@ -8,6 +8,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## [Unreleased]
 
+### Added (templates; ROADMAP "Enforcement Gate v1.2" item 5; not yet released, no version bump)
+
+- Three FIELD templates for the Force-Field Platform build roles: `ssl-fp-builder`, `ssl-fp-reviewer`, `ssl-fp-coordinator` (`skills/field/templates/`). Federated (peers and contracts declared), E3 deny patterns on, E5 on, `.github/workflows/` protected, hash-chain ledger, FORCE presets analysis / audit / analysis. None can merge; the builder pushes only its own branch; the reviewer cannot commit, push or approve.
+- Schema unchanged. They validate against `manifest-schema.json` and the CI template loop picks them up. `REPLACE-ME` values remain for the operator. Role definitions are assumptions from the names, flagged in each file's header; delegation `scope` text is not machine-enforced.
+
+### Added (FORCE + FIELD runtime composition; ROADMAP "Enforcement Gate v1.2" item 3; not yet released, no version bump)
+
+- **`SessionStart` hook `hooks/field-compose.sh` / `field-compose.py`.** When the project's `field-manifest.yaml` declares `runtime_protocol: {name: FORCE, preset: analysis|brainstorm|draft|audit}`, the hook injects that preset's FORCE blocks (`skills/force/protocol.md`; presets as in `protocol-defaults.json`) into the session as `additionalContext`. Previously the declaration was not wired to anything.
+- **Fails open and only adds context.** It never denies, never writes state, always exits 0; no manifest, no `runtime_protocol`, a name other than FORCE, an unknown preset, no Python or a parse error injects nothing. The Enforcement Gate is unchanged and stays fail-closed. The manifest preset wins over the user-level `force.json`.
+- Manifest lookup matches the gate (`$FIELD_MANIFEST`, `$CLAUDE_PROJECT_DIR`, hook cwd). PyYAML is used if present; without it a small fallback reads the `runtime_protocol` block.
+- Tests: `hooks/test/run_compose.sh` (13 cases), added to `run_all.sh` and CI; `run_post_hook.sh` registration check now expects the `SessionStart` event.
+- Not covered: FORCE is advisory context, not enforcement. The model can drift from it; nothing audits compliance.
+
 ### Fixed (gate: per-call ledger work is O(new events), not O(all events); behaviour-preserving, not yet released, no version bump)
 
 The gate read the **whole** ledger on every call, so a call cost about 14 us per ledger line and grew without limit; a hook that runs past its 10 s timeout is **allowed** by Claude Code (fails open). Measured here (CPU seconds per gate call, `Bash ls`, E5 on, synthetic 390-byte records, CPU time because the dev machine was saturated by other work and wall time was not stable): 100 000 lines 1.66 (Windows, Python 3.12) / 2.21 (WSL), 300 000 lines 4.44 / 7.26 (WSL p95 10.1, over the timeout), 1 000 000 lines 14.8 / 30.1. A review had measured 6.6 to 7.9 s wall at 300 000 lines.
