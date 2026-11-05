@@ -462,21 +462,58 @@ def exec_suspect_tokens(cmd, depth=0, root=None, written=None):
     return out
 
 
+def _anchor_file(ledger_path):
+    """Opt-in anchor (1.5.2): when FIELD_ANCHOR_DIR is set, the gate keeps {count, hash} of the ledger's last record
+    in a file there, outside the project's .claude/state/. Point it at a directory the agent's tools cannot reach."""
+    d = os.environ.get("FIELD_ANCHOR_DIR")
+    if not d:
+        return None
+    key = hashlib.sha256(str(pathlib.Path(ledger_path).resolve()).casefold().encode()).hexdigest()[:16]
+    return pathlib.Path(d) / (key + ".json")
+
+
+def anchor_problem(ledger_path, lines):
+    """Why the ledger (its non-empty `lines`) contradicts the anchor, else None. A deleted, emptied or truncated
+    ledger, or one whose record at the anchored position changed, is a rollback that a restarted chain hides."""
+    af = _anchor_file(ledger_path)
+    if af is None or not af.exists():
+        return None
+    a = json.loads(af.read_text(encoding="utf-8"))
+    n = int(a["count"])
+    if len(lines) < n:
+        return f"the ledger holds {len(lines)} records but the anchor recorded {n}"
+    try:
+        h = json.loads(lines[n - 1])["hash"]
+    except Exception:
+        h = None
+    return None if h == a["hash"] else f"record {n} differs from the anchor"
+
+
 def ledger_append(ledger_path, record):
     ledger_path.parent.mkdir(parents=True, exist_ok=True)
     if not ledger_path.exists():
         # New ledgers are owner-only on POSIX (no-op on Windows). Existing files are left as they are.
         os.close(os.open(str(ledger_path), os.O_CREAT | os.O_WRONLY, 0o600))
     prev = "0" * 64
+    lines = []
     if ledger_path.exists():
         lines = ledger_path.read_text(encoding="utf-8").strip().splitlines()
         if lines:
             prev = json.loads(lines[-1])["hash"]
+    problem = anchor_problem(ledger_path, lines)
+    if problem:  # fail closed: main() turns this into an E0 deny. Remove the anchor file (a human) to start over.
+        raise RuntimeError(f"ledger rolled back ({problem}); fail-closed")
     record["prev_hash"] = prev
     body = json.dumps(record, sort_keys=True)
     record["hash"] = hashlib.sha256((prev + body).encode()).hexdigest()
     with ledger_path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, sort_keys=True) + "\n")
+    af = _anchor_file(ledger_path)
+    if af is not None:
+        af.parent.mkdir(parents=True, exist_ok=True)
+        tmp = af.with_name(af.name + ".tmp")
+        tmp.write_text(json.dumps({"count": len(lines) + 1, "hash": record["hash"]}), encoding="utf-8")
+        os.replace(tmp, af)
 
 
 def gate_lock(root):
@@ -1014,9 +1051,10 @@ def e3_variants(cmd, depth=0):
                 elif b == "git" and "push" in rest:
                     after = rest[rest.index("push") + 1:]
                     short, long_ = _flags(after)
-                    if ("f" in short or _long_is(long_, "force", 2) or any(n.startswith("force-") for n in long_)
-                            or any(a.startswith("+") and len(a) > 1 for a in after if not a.startswith("-"))):
-                        out.append("git push --force " + " ".join(a.lstrip("+") for a in after if not a.startswith("-")))
+                    if ("f" in short or "d" in short or _long_is(long_, "force", 2) or "delete" in long_
+                            or any(n.startswith("force-") for n in long_)
+                            or any(a[:1] in "+:" and len(a) > 1 for a in after if not a.startswith("-"))):
+                        out.append("git push --force " + " ".join(a.lstrip("+:") for a in after if not a.startswith("-")))
             i = _command_index(ws)
             if i is not None and depth < 3:
                 _marked, nested = _stage_marks(stage, i, lambda _w: False)

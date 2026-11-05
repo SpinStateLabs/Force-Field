@@ -170,6 +170,27 @@ for c in 'git status' 'git stash' 'git stash pop' 'git checkout main' 'git rm ol
   bash_allow "E2 allow (git): $c" "$P" "$c"
 done
 
+# ---- opt-in ledger anchor (FIELD_ANCHOR_DIR): a deleted, emptied or truncated ledger is a rollback, not a fresh start ----
+FIELD_ANCHOR_DIR="$T/anchors"; export FIELD_ANCHOR_DIR
+P=$(proj p8)
+allow "anchor: call 1" "$P" Bash '{"command":"ls"}'
+allow "anchor: call 2" "$P" Bash '{"command":"ls"}'
+vr "$P"; expect "anchor: intact ledger verifies" 0 "$VRC"
+rm -rf "$P/.claude/state"
+deny "anchor: state wiped, next call -> E0" "$P" Bash '{"command":"ls"}' E0
+vr "$P"; [ "$VRC" != 0 ] && expect "anchor: wiped ledger fails verify" ok ok || expect "anchor: wiped ledger fails verify" "non-zero" "$VRC"
+case "$OUT" in *"ROLLED BACK"*|*MISSING*) expect "anchor: verify names the problem" ok ok;; *) expect "anchor: verify names the problem" "ROLLED BACK" "$OUT";; esac
+P=$(proj p9)
+allow "anchor: truncate setup 1" "$P" Bash '{"command":"ls"}'
+allow "anchor: truncate setup 2" "$P" Bash '{"command":"ls"}'
+head -n 1 "$P/.claude/state/field-ledger.jsonl" > "$P/l.tmp"; cp "$P/l.tmp" "$P/.claude/state/field-ledger.jsonl"
+deny "anchor: truncated ledger -> E0" "$P" Bash '{"command":"ls"}' E0
+rm -rf "$FIELD_ANCHOR_DIR"
+allow "anchor: a human removing the anchor starts over" "$P" Bash '{"command":"ls"}'
+unset FIELD_ANCHOR_DIR
+P=$(proj p10); allow "no anchor configured: unchanged" "$P" Bash '{"command":"ls"}'; rm -rf "$P/.claude/state"
+allow "no anchor configured: a wiped state restarts as before" "$P" Bash '{"command":"ls"}'
+
 # ---- finding 3: E3 must not depend on flag spelling ----
 P=$(proj p6)
 for c in 'rm -rf node_modules' 'rm -fr x' 'rm -Rf x' 'rm -rfv x' 'rm -vfr x' 'rm -r -f x' 'rm -f -r x' 'rm -R -f x' \
@@ -177,7 +198,7 @@ for c in 'rm -rf node_modules' 'rm -fr x' 'rm -Rf x' 'rm -rfv x' 'rm -vfr x' 'rm
          'rm x -rf' 'rm x -r -f' 'rm -rf -- x' 'sudo rm -fr x' 'sudo -u root rm -r -f x' 'xargs rm -fr' 'find . -type f | xargs rm -r -f' \
          'bash -c "rm -fr x"' "sh -c 'rm --recursive --force x'" 'eval "rm -r -f x"' 'ls; rm -fr x' 'ls && rm -r -f x' \
          'git push --force-with-lease' 'git push -f' 'git push origin main -f' 'git push --force' 'git push -uf origin main' \
-         'git push origin +main' 'git push origin +HEAD:main' 'git push +main' 'git push --force-with-lease=main' \
+         'git push origin +main' 'git push origin --delete main' 'git push -d origin main' 'git push origin :main' 'git push origin +HEAD:main' 'git push +main' 'git push --force-with-lease=main' \
          'git push --force-with-lease=main:abc123' 'git push --force-if-includes' 'git -C repo push -f' 'git -c x=y push -f origin' \
          'sudo git push -f' 'cd repo && git push -f' 'bash -c "git push origin +main"'; do
   bash_deny "E3 deny: $c" "$P" "$c" E3

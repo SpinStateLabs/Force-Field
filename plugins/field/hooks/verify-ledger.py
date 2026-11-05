@@ -39,6 +39,12 @@ def resolve(argv):
 
 def main():
     path = resolve(sys.argv)
+    gate = _gate()
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    problem = gate.anchor_problem(path, [ln for ln in text.splitlines() if ln.strip()])
+    if problem:  # FIELD_ANCHOR_DIR is set and the ledger contradicts it
+        print(f"LEDGER ROLLED BACK: {problem} ({path})")
+        sys.exit(1)
     if not path.exists():
         print(f"LEDGER MISSING: {path}")
         sys.exit(2)

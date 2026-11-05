@@ -159,8 +159,9 @@ hash chain is tamper-evident, not tamper-proof: `/field verify` detects an edit 
 link, not a ledger re-chained from scratch after the edit, which verifies INTACT. `/field verify` reports
 a missing or empty ledger as `LEDGER MISSING` with a non-zero exit (1.5.2), but a ledger that was
 deleted and then restarted by the next gated call is a short, valid chain and verifies INTACT: the
-chain has no external anchor, so a record count that dropped is visible only to someone who kept the
-earlier count. The chain is
+chain has no external anchor unless you set `FIELD_ANCHOR_DIR` (1.5.2, opt-in): the gate then keeps the
+last record's count and hash there, and a deleted, emptied or truncated ledger denies with E0 and fails
+`/field verify` as `LEDGER ROLLED BACK`. The chain is
 unkeyed (`sha-256-chain`); the gate implements no signed or keyed scheme, so the chain's value
 rests on who can write the file. E2 denies the agent's own tools every write to the ledger and to
 the rest of `.claude/state/`; a process outside the gate (or the human) can still rewrite it. Regex
