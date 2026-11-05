@@ -41,7 +41,12 @@ def main():
     path = resolve(sys.argv)
     gate = _gate()
     text = path.read_text(encoding="utf-8") if path.exists() else ""
-    problem = gate.anchor_problem(path, [ln for ln in text.splitlines() if ln.strip()])
+    last = [ln for ln in text.splitlines() if ln.strip()][-1:]
+    try:
+        last_hash = json.loads(last[0])["hash"] if last else "0" * 64
+    except Exception:
+        last_hash = "?"  # an unreadable last record: the chain check below reports it
+    problem = gate.anchor_problem(path, last_hash) if last_hash != "?" else None
     if problem:  # FIELD_ANCHOR_DIR is set and the ledger contradicts it
         print(f"LEDGER ROLLED BACK: {problem} ({path})")
         sys.exit(1)

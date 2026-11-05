@@ -183,6 +183,7 @@ case "$OUT" in *"ROLLED BACK"*|*MISSING*) expect "anchor: verify names the probl
 P=$(proj p9)
 allow "anchor: truncate setup 1" "$P" Bash '{"command":"ls"}'
 allow "anchor: truncate setup 2" "$P" Bash '{"command":"ls"}'
+allow "anchor: truncate setup 3" "$P" Bash '{"command":"ls"}'  # one record of lag is tolerated, so cut two
 head -n 1 "$P/.claude/state/field-ledger.jsonl" > "$P/l.tmp"; cp "$P/l.tmp" "$P/.claude/state/field-ledger.jsonl"
 deny "anchor: truncated ledger -> E0" "$P" Bash '{"command":"ls"}' E0
 rm -rf "$FIELD_ANCHOR_DIR"

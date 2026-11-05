@@ -151,6 +151,28 @@ in a project with a manifest it denies with E0. Without PyYAML the gate fails cl
 `--bare` and `disableAllHooks` turn it off. Once a manifest exists the agent cannot edit it —
 governance changes are made by the human, outside the session.
 
+When the gate hook itself fails (ADR-0081, not yet released): `hooks.json` sets `"onFailure": "block"` on the gate. On Claude Code
+2.1.295 and later a gate hook that times out (10 s) BLOCKS the tool call (Enforced; measured on Claude Code 2.1.308 on Windows 10 with
+Git Bash, 2026-10-25: a stand-in gate that sleeps past the timeout was blocked, reason `timed out; blocking because onFailure is "block"`,
+10.8 s after the hook started, and the command did not run; the independent review reproduced it, two blocked calls in one run). Control, measured on the same
+build with Git Bash: without the key the timed-out gate let the call through (its result came 23.4 s after the call, about 10 s after the
+hook was cancelled; why it waited is unverified). A gate hook that crashes, cannot start or prints invalid JSON is blocked by the same
+documented setting (Declared: only the timeout was run). `plugin.json` declares no minimum Claude Code version: on versions before 2.1.295
+the key is expected to be ignored, so such failures let the call through as before (Declared: no older build was run). Plugin users should
+check `claude --version`. On Windows without Git Bash the behaviour differs before 2.1.310 (2.1.299, 2.1.309 and 2.1.310 each changed when
+such a hook fails open; on 2.1.308 with Git Bash not detected a timed-out gate was blocked with or without the key, measured). Linux and
+macOS were not run. Because the hook cannot report "no manifest" when it never answers, a stalled gate now stops tool use in every project
+where the plugin is enabled, governed or not, until it recovers. A very large ledger or a queue of parallel calls on the gate's lock can
+also reach the 10 s timeout, because the gate's own 5 s budget starts after the lock and the whole-ledger reads are outside it (PR #16
+reduces the ledger part); such a call is now blocked with Claude Code's notice instead of an E0 reason.
+
+If every tool call is blocked with `... field-gate.sh"]: timed out; blocking because onFailure is "block"`, act in a terminal (the agent
+cannot, its calls are the ones blocked): check that `sh -c 'echo ok'` and `python3 -c 'import yaml'` (or `py -3`, `python`) start; on
+Windows with Git for Windows in a non-standard place set `CLAUDE_CODE_GIT_BASH_PATH` to its `bash.exe` and start a new session. To get
+working at once, `claude plugin disable field@force-field` (then a new session), `--bare` (API-key auth only, not a claude.ai login), or
+`disableAllHooks: true` turn the gate off entirely, which leaves governed projects unprotected until it is re-enabled. The live check is `hooks/test/run_timeout_live.sh` (needs a
+logged-in `claude`; three `claude -p` invocations of up to 2 turns each, case A may end with `error_max_turns`; not in CI).
+
 ## Limitations
 
 Enforcement and Ledger are runtime-enforced in Claude Code (E1–E5, L above); Federated, Identity
@@ -176,9 +198,40 @@ variable (`cd "$D" && rm -r state`) is not followed. E3 canonicalises `rm` and `
 every irreversible program (`git push --delete`, `git clean -fdx`, `dd`, `truncate` are not in the
 default patterns). E5 is strict on purpose: non-read-only commands naming a written file
 (`cp`, `mv`, `pytest x.py`) are denied unless exempted. Hook input over 4 MiB, a shell command over
-64 KiB, or a check that runs past 5 s denies with E0 rather than risk the 10 s hook timeout, which
-fails open. `/field audit` produces an audit-ready report; independent certification is a separate
+64 KiB, or a check that runs past 5 s denies with E0 rather than run into the 10 s hook timeout (which
+blocks on Claude Code 2.1.295 and later and fails open before: see "When the gate hook itself fails"). `/field audit` produces an audit-ready report; independent certification is a separate
 service.
+
+### The ledger index (what a call reads, and what remains Declared)
+
+A gate call reads only the end of the ledger plus what was appended since the last call; `.claude/state/field-ledger-<hash>.idx` (inside the E2-protected state directory) remembers how far it verified. It is a cache, never a source of allows: a missing, damaged, foreign or stale sidecar is ignored and the whole ledger is verified from byte 0 (strict UTF-8, every line JSON, as before). Verification that cannot finish inside the 5 s budget saves its progress and denies E0 until it has caught up, instead of running into the 10 s hook timeout, which fails open.
+
+What this does not do, stated precisely:
+
+- The per-call check is not the hash chain. The gate never verified the chain on a call and still does not (`/field verify` does, offline). The chain is unkeyed.
+- Someone who can write the **sidecar but not the ledger** can make E5 miss a file this session wrote only by emptying an entry from a completed segment, and only until the random re-check re-derives that segment: each call re-hashes k random completed segments (512 lines each) and re-derives the entries of one of them; an entry emptied from the sidecar alone leaves the segment's bytes, and so its digest, unchanged, so only the re-derivation finds it and the expected time is the number of segments (about 585 calls at 300 000 lines, 1 950 at 1 000 000). The same window applies to `field-post.py`, which uses the sidecar only when the gate would: an ask hidden there gets no evidence record until it is found. The newest 512 lines (the open segment) are re-derived on every call, so a write or ask made recently is not hideable. Forged offsets, identities, checksums, segment tilings and emptied sidecars are refused.
+- Someone who can rewrite **the ledger and the sidecar consistently** is not detected. That was already true of the ledger alone (no key, no chain check per call). E2 denies the agent's own tools every write to both; keep write access to `.claude/state/` away from the agent.
+- Damage in the middle of the ledger (an edit, a bad byte) that leaves the last 4 KiB before the recorded offset intact is noticed on the first call whose sample of k segments draws it, not at once: k = min(n, max(4, ceil(sqrt(n))), 32) of the n completed segments are re-hashed per call, so the expected wait is n/k calls (about 23 at 300 000 lines, 99 % within 106; about 61 at 1 000 000, 99 % within 279). The old gate noticed any invalid UTF-8 at once.
+- The first call after upgrading (or after the sidecar is deleted) on a ledger too large for the budget (about 200 000 lines on a 2024 laptop) denies a few times before it catches up.
+- `verify-ledger.py` still reads the whole file; so does the counter file's per-session map, which grows with the number of sessions, not calls.
+
+### Known-bypass register (E2 and E5 are text-scanning controls, not a sandbox)
+
+Windows path handling (ADR-0080) resolves symlinks, junctions and 8.3 short names, strips `\\?\` prefixes, NTFS streams and trailing dots, and refuses (E0) any path it cannot map to a drive letter: UNC and admin-share (`\\localhost\C$\...`, `//localhost/C$/...`), `\\?\Volume{GUID}\`, `\\?\GLOBALROOT\Device\...`, `\\.\` device paths and drive-relative `C:x`. Local admin-share access is denied by design; a project that itself lives on a UNC share keeps working because paths under the identically cleaned root are allowed. Not covered, and not fixable by this mechanism:
+
+- **Hard links** to a protected or session-written file: `realpath` cannot see them (identical on POSIX). A hard link made by the agent through Bash is a file created by Bash itself.
+- **Shell expansion**: `$PWD`, `$(pwd)`, `${CLAUDE_PROJECT_DIR}`, `%CD%`, `$env:...`, and Git Bash `/proc/self/cwd/...` spell the path in a form the gate does not evaluate.
+- **A program that opens the path itself**: `python -c "open(...)"`, `node -e`, an editor macro.
+- **Unknown**: network drives mapped with `net use` (untested); whether Claude Code ever passes a `\\?\Volume{}`, GLOBALROOT, UNC or drive-relative path to the OS at all (the gate refuses them either way); Python versions other than 3.12 and 3.14.
+- **Refusals that can be false denies**: a word that starts with two slashes (`cat //etc/passwd`, `git diff -- //foo/bar`) is a UNC path on Windows (`\\etc\passwd`), so the gate denies E0 for it even in a read-only command; use a single slash. A path the OS cannot open to resolve (Win32 error 5, access denied, or 1920, a Store app-execution alias such as `WindowsApps/python.exe`) is kept as written rather than denied: nothing can be followed through it, and the agent could not write through it either. A directory with more than 20000 entries is not listed (the listing only saves failed opens); the path then goes to the OS directly.
+- Words of a Bash command are link-resolved when they contain a slash, start with `~`, or name an entry of the project root (`echo x >> link`). A bare word that names an entry of the current directory when that is not the project root is not resolved (the gate resolves against the project root, as above).
+- A symlink or junction **loop**, or any resolution error other than "does not exist", denies E0 on Windows. On POSIX a loop is not detected (unchanged: `realpath` returns the path as is).
+- **Bare-word link names with special characters.** Fixed on POSIX in PR 15; still open on Windows (a name starting with `-`). A link whose name begins with `-` or contains `?`, `*`, `"`, `<`, `>` or `|` is never resolved as a bare word: `echo x >> -lnk` (link `-lnk` to `.claude/state/f`) writes through it unseen. Name such a link with a slash (`./-lnk`) and it is caught.
+- **Globs that match a root link.** Fixed in PR 15 for the first path component (no brace expansion). `echo x >> led?` or `echo x >> led*` where `ledger` is a link into `.claude/state`: the shell expands the glob after the gate has looked at the text.
+- **A link created in the same command or in a parallel call is invisible at check time.** The gate resolves links as they exist when it runs. `ln -s .claude/state l && echo x > l/f`, or PowerShell `cmd /c mklink /D l .claude\state; echo x > l\f` / `New-Item -ItemType SymbolicLink`, creates the link and writes through it in one call, so the link protection (ADR-0080) does not apply to it. This defeats the link feature in a single call; treat link resolution as covering links that already exist.
+- **cmd forms not followed (open).** `%COMSPEC% /c ...`, `winpty cmd /c ...`, `cmd /c 'set A=.claude&& echo x > %A%\x'` (shell expansion), and a bare name after a `cd` in the same command (the gate does not track the working directory); also `cmd /c a.bat` and `cmd < file` (the command line is in a file the gate does not read), `%COMSPEC% /c`, `"%COMSPEC%"` and `start /b cmd` in the Bash tool, `replace` and `wmic ... delete` (cmd file commands that are not mapped), and `python -c` inside a cmd line. Also open: `cmd` spelled `c?d`, `$C`, `$'cmd'`, `$(echo cmd)` or with a backtick (c`md); `cat file | cmd` (the file is not read); `Start-Process` with an obfuscated cmd. Also open (accident-guard limits): PowerShell `$ExecutionContext.InvokeCommand.InvokeScript('cmd /c \"rd /s /q .claude\"')` is allowed (a string run as code by a route the gate does not list); a UNC target inside a cmd line, for example `cmd /c \"copy other\a \host\share\x\"`, is not caught; Bash `echo x > file://host/share/x` is allowed; and Bash `python3 -c \"...urlopen('https://example.com/?a=1&b=2')\"` is a false deny (the base gate denies it too). Also open: wrappers `nohup`, `timeout`, `command`, `exec` before `rm -r .claude` or `cmd /c rd ...`; `echo "rm -r .claude" | bash`; PowerShell `Start-Process cmd -ArgumentList '/c','rd ...'` and `& $env:ComSpec /c`; `find . -name .claude -delete`; `rm -r .*`; Beyond three levels of nesting the gate denies a call whose remaining text holds a removal verb or protected name; `-EncodedCommand`/`-enc` and `cmd < file` are denied. This parser is an accident guard, not a security boundary. Pre-existing and still open: the wipe check (project directory, parents, `.claude`) looks at the top-level command and, since this PR, at `bash -c`/`sh -c`/`-Command` and cmd payloads (three levels), but not at `env`/`sudo` wrapped commands, `eval`, `xargs rm -r`, `find -exec rm -r`, or `python -c` rmtree; `rm -rf` is also caught by the manifest's E3 pattern, so forms without `-f` are the ones the E2 check alone must stop; the PowerShell tool has no wipe check for its own cmdlets and aliases (`rm -r -fo .claude`, `ri -Recurse .claude`, `del .claude -r`, `Move-Item .claude ..\x`, `[IO.Directory]::Delete`, `rd /s /q` as a bare PowerShell command, `robocopy empty . /mir`); `robocopy`, `attrib`, `icacls` and `mklink` inside a cmd line are not judged; `%CD%`, `%~dp0` and other cmd variable expansion, `..\` traversal out of the project and `.cla*` patterns in a directory name are not resolved.
+- **PowerShell colon-bound parameters.** Fixed in PR 15. Only path-valued parameters are split. `Set-Content -Path:.claude\state\x` binds the value to the flag with a colon; the state-directory pattern is anchored at the start of a token, so it does not match after the `-Path:` prefix.
+- **False deny (fixed in PR 15 unless that drive letter exists): single-letter prefix with two or more colons.** `echo a:b:c` (also `Write-Output a:b:c`) reads as a drive-relative path `a:` and gives E0 UnresolvablePath although it is not a path. Quote-free workaround: put the text in a file or quote it so it is not a bare word.
 
 ## Related
 

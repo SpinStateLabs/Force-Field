@@ -89,8 +89,10 @@ import datetime
 import fnmatch
 import hashlib
 import json
+import math
 import os
 import pathlib
+import ntpath
 import posixpath
 import re
 import shlex
@@ -143,6 +145,8 @@ WRAPPERS = {"sudo", "env", "nohup", "time", "exec", "command", "nice", "builtin"
 def project_root(inp):
     for cand in (os.environ.get("CLAUDE_PROJECT_DIR"), inp.get("cwd")):
         if cand and os.path.isdir(cand):
+            if os.name == "nt" and re.match(r"^[A-Za-z]:$", str(cand).strip()):
+                cand = ntpath.abspath(str(cand).strip())  # a bare drive (W:) is that drive's current directory
             return pathlib.Path(cand)
     return pathlib.Path.cwd()
 
@@ -264,28 +268,182 @@ def tool_call_budget(enf):
 _ROOT_CACHE = {}
 
 
+class UnresolvablePath(Exception):
+    """A Windows path spelling the gate cannot map to a drive-letter path it can match (ADR-0080)."""
+
+
+# Win32 error codes meaning "this path does not exist (yet)": resolve the part that does.
+_WIN_GONE = (2, 3, 123, 161, 267)
+# A Windows path that is not on a drive letter: UNC //host/share, or a device or volume form (//?/Volume{...}, //./pipe).
+_WIN_NONLOCAL = re.compile(r"^(//([?.]/|[^/]+/[^/]+)|/{1,2}\?\?(/|$))")
+
+
+def _win_clean(s):
+    """Windows path text that Win32 reads as the same file, made literal (ADR-0080). `s` is already
+    '/'-separated. Drops the extended-length prefix only where a drive letter follows (//?/C:/x
+    becomes C:/x; //?/UNC/host/share becomes //host/share), likewise the NT form /??/; //?/Volume{...},
+    //./ and /??/Volume forms keep their prefix so the caller can refuse them. Repeated separators after a
+    leading // collapse. Maps Git Bash /c/ to C:/. Per component: a final
+    component loses an NTFS stream suffix (file::$DATA, file:ads) and trailing dots and spaces; a
+    directory component loses trailing dots and a stream or attribute suffix that starts `:$` or `::$`
+    (dir:$I30, dir::$INDEX_ALLOCATION, dir:$I30:$INDEX_ALLOCATION: they name the directory itself). A component of three or
+    more dots is a real name and stays; `.` and `..` stay. A colon elsewhere is left alone
+    (http://host:80/a, PATH=/a:/b). Text only; no file system access."""
+    m = re.match(r"^(?://[?.]|/{1,2}\?\?)/(?:(UNC)/|(?=[A-Za-z]:(?:/|$)))", s, re.I)
+    if m:
+        s = ("//" if m.group(1) else "") + s[m.end():]
+    if s.startswith("//"):
+        s = "//" + re.sub(r"/{2,}", "/", s[2:])  # //host//share is //host/share
+    s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
+    drive = ""
+    if re.match(r"^[A-Za-z]:", s):
+        drive, s = s[:2], s[2:]
+    parts = s.split("/")
+    last = len(parts) - 1
+    for i, p in enumerate(parts):
+        if p in ("", ".", "..") or (len(p) > 2 and not p.strip(".")):
+            continue
+        if ":" in p and (i == last or ":$" in p):
+            p = p.split(":", 1)[0]
+        p = p.rstrip(". ") if i == last else p.rstrip(".")
+        parts[i] = p
+    return drive + "/".join(parts)
+
+
+_REAL_CACHE = {}
+_LIST_CACHE = {}
+_LIST_MAX = 20000  # a directory with more entries is not listed (a cold huge listing could outlast the 10 s hook timeout)
+# Win32 errors that mean "cannot be opened to be resolved" (a Store app-execution alias, an access-denied system directory):
+# nothing can be followed, so the path is kept as is. Anything else (a loop, 1921) raises.
+_WIN_OPAQUE = (5, 1920)
+
+
+def _absent(parent, name):
+    """True only when `name` certainly names no entry of the directory `parent` (already resolved). Names that
+    could be an alias of an entry (8.3 short names carry '~'; non-ASCII names fold by NTFS's own table) are never
+    called absent, nor is anything in a directory over _LIST_MAX entries. The listing is read once per directory
+    (the hook is one process per tool call) and compared case-insensitively, as NTFS does."""
+    if "~" in name or not name.isascii():
+        return False
+    if parent not in _LIST_CACHE:
+        names = set()
+        try:
+            with os.scandir(parent) as it:
+                for entry in it:
+                    names.add(entry.name.casefold())
+                    if len(names) > _LIST_MAX:
+                        names = None
+                        break
+        except OSError:
+            names = None
+        _LIST_CACHE[parent] = names
+    names = _LIST_CACHE[parent]
+    return names is not None and name.casefold() not in names
+
+
+def _win_real(s, _hops=0):
+    """Windows: realpath of `s` (symlinks, junctions, 8.3 names), strictly. `..` is collapsed first, as
+    Win32 does. The longest existing prefix is resolved and the rest appended. A dangling symlink or junction is
+    followed as far as it goes (it may point at a protected file that does not exist yet). An error that means
+    the path cannot be opened (_WIN_OPAQUE) keeps the path; any other error other than 'does not exist' (a
+    symlink or junction loop, 1921) raises OSError and the gate denies E0: Python's lenient realpath returns the
+    path unresolved for a loop, which would let it through. The parent directory is resolved once and cached (one
+    hook process per tool call), and a name the parent's listing does not contain skips the failing open."""
+    cur = ntpath.normpath(s)
+    hit = _REAL_CACHE.get(cur)
+    if hit is not None:
+        return hit
+    try:
+        # a final component of three or more dots opens its parent on Win32 (the name is not a real directory
+        # entry): treat it as not existing so it stays in the result
+        dots = len(ntpath.basename(cur)) > 2 and not ntpath.basename(cur).strip(".")
+        if dots:
+            raise FileNotFoundError(cur)
+        parent, name = ntpath.split(cur)
+        if name and parent != cur:
+            rp = _win_real(parent)
+            if _absent(rp, name):  # certainly no such entry: skip the failing open
+                out = ntpath.join(rp, name)
+                _REAL_CACHE[cur] = out
+                return out
+        out = os.path.realpath(cur, strict=True)
+    except OSError as exc:
+        werr = getattr(exc, "winerror", None)
+        if isinstance(exc, (FileNotFoundError, NotADirectoryError)) or werr in _WIN_GONE:
+            parent, name = ntpath.split(cur)
+            dots = len(name) > 2 and not name.strip(".")
+            if not dots and os.path.lexists(cur):  # dangling link: follow it as far as it goes
+                out = os.path.realpath(cur)
+                # lenient realpath leaves 8.3 names in the missing tail; resolve the target again
+                if ntpath.normpath(out).casefold() != cur.casefold():
+                    if _hops > 20:
+                        raise OSError("too many dangling-link hops: " + cur)
+                    out = _win_real(out, _hops + 1)
+            else:
+                out = cur if (not name or parent == cur) else ntpath.join(_win_real(parent), name)
+        elif werr in _WIN_OPAQUE:
+            out = cur
+        else:
+            raise
+    _REAL_CACHE[cur] = out
+    return out
+
+
+def _root_text(key):
+    """Windows project root as cleaned text; a bare drive (`W:`, the drive's current directory) is made absolute."""
+    k = _win_clean(_norm(key))
+    if re.match(r"^[A-Za-z]:(?!/)", k):
+        k = _norm(ntpath.abspath(k))
+    return k
+
+
 def _root_norm(root):
     """(normalised project root, win). Windows is detected from a drive letter or os.name; there
-    the root is case-folded, on POSIX symlinks are resolved. Cached: called once per token."""
+    the root is case-folded and cleaned (_win_clean) and, since ADR-0080, resolved with realpath
+    (symlinks, junctions, 8.3 names) as on POSIX. Cached: called once per token."""
     key = str(root)
     if key not in _ROOT_CACHE:
         win = bool(re.match(r"^[A-Za-z]:", _norm(key))) or os.name == "nt"
-        rootn = posixpath.normpath(_norm(key if win else os.path.realpath(key)))
+        if os.name == "nt":
+            rootn = posixpath.normpath(_win_clean(_norm(_win_real(_root_text(key)))))
+        elif win:
+            rootn = posixpath.normpath(_norm(key))
+        else:
+            rootn = posixpath.normpath(_norm(os.path.realpath(key)))
         _ROOT_CACHE[key] = (rootn.casefold() if win else rootn, win)
     return _ROOT_CACHE[key]
 
 
+def _drive_relative(s, before_clean=None):
+    """True for a drive-relative word (C:x). On Windows only when that drive exists: `a:b`, `x:y:z`, "a:b" in
+    `npm test --grep "a:b"` name nothing the OS can open, so they are no E0 (PR 15). Elsewhere (a simulated
+    Windows root) every such word is refused."""
+    return bool(re.match(r"^[A-Za-z]:(?!/|$)", s)) and (sys.platform != "win32" or os.path.exists(s[0] + ":/"))
+
+
 def _abs_norm(raw, root):
     """(normalised absolute POSIX-style path, normalised root). ~ expanded, backslashes to '/',
-    relative paths joined to the root, Git Bash /c/ mapped to C:/ and case folded on Windows,
-    symlinks and '..' resolved on POSIX (realpath), then normpath."""
+    relative paths joined to the root. On Windows: Git Bash /c/ mapped to C:/, extended-length
+    prefixes, NTFS streams and trailing dots removed (_win_clean), symlinks, junctions and 8.3
+    names resolved (_win_real), the result case folded. A path that is not on a drive letter (UNC,
+    volume-GUID, GLOBALROOT and device forms, drive-relative C:x) raises UnresolvablePath unless it is
+    under the identically cleaned project root; so does a symlink loop or access error (OSError):
+    main() turns either into an E0 deny. On POSIX: symlinks and '..' resolved by realpath."""
     rootn, win = _root_norm(root)
     s = _norm(os.path.expanduser(str(raw or ""))).strip()
     if win:
-        s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
+        if os.name == "nt":
+            before_clean, s = s, _win_clean(s)
+            if (_WIN_NONLOCAL.match(s) and not (s.casefold() + "/").startswith(rootn + "/")) \
+                    or _drive_relative(s, before_clean):
+                raise UnresolvablePath("path is not on a drive letter the gate can match (UNC, volume, device or drive-relative form)")
+        else:
+            s = re.sub(r"^/([A-Za-z])/", r"\1:/", s)
     if not (s.startswith("/") or re.match(r"^[A-Za-z]:/", s)):
         s = rootn + "/" + s
-    if not win:
+    if os.name == "nt":
+        s = _win_clean(_norm(_win_real(s)))
+    elif not win:
         s = _norm(os.path.realpath(s))
     s = posixpath.normpath(s)
     return (s.casefold() if win else s), rootn
@@ -305,6 +463,54 @@ def path_key(raw, root):
     return "sha256:" + hashlib.sha256(s.encode("utf-8")).hexdigest()
 
 
+_LINK_CACHE = {}
+
+
+def _root_links(root):
+    """POSIX: the names of the symlinks directly under the project root (dangling ones included), from one cached
+    listing, so a command of thousands of words costs one scandir. None when the root cannot be listed or holds
+    more than _LIST_MAX entries: the caller then asks the file system about each word."""
+    key = str(root)
+    if key not in _LINK_CACHE:
+        links = set()
+        try:
+            with os.scandir(key) as it:
+                for n, entry in enumerate(it, 1):
+                    if n > _LIST_MAX:
+                        links = None
+                        break
+                    if entry.is_symlink() or getattr(entry, "is_junction", lambda: False)():
+                        links.add(entry.name)
+        except OSError:
+            links = None
+        _LINK_CACHE[key] = links
+    return _LINK_CACHE[key]
+
+
+def _bare_name_resolves(s, root):
+    """A bare word (no '/', so not otherwise resolved) that names a link in the project root, or that Win32 would
+    read differently (stream, trailing dot), is resolved like a path: `echo x >> link` writes through a link.
+    Windows: any entry of the root (links and 8.3 aliases cannot be told apart cheaply). POSIX (since ADR-0080,
+    PR 14): only a symlink, dangling or not, so a plain bare word is never resolved and a command that names no
+    link is judged exactly as before. Both use one cached root listing."""
+    if os.name != "nt":
+        # a link is resolved whatever its name holds: a leading '-' or a glob character is part of the name (PR 15)
+        if s in (".", ".."):
+            return False
+        links = _root_links(root)
+        if links is None:
+            return os.path.islink(os.path.join(str(root), s))
+        return s in links
+    if s.startswith("-") or any(c in s for c in '*?<>|"'):
+        return False
+    if _win_clean(s) != s:
+        return True
+    try:
+        return not _absent(_win_real(_root_text(str(root))), s)
+    except OSError:
+        return True
+
+
 def _path_forms(raw, root, force=False):
     """Strings E2 matches for one value: as given (backslashes to '/') and, when it looks like a
     path (contains '/', starts with '~', or force), its normalised absolute form and, inside the
@@ -312,31 +518,23 @@ def _path_forms(raw, root, force=False):
     matched by the same patterns as the plain name."""
     s = _norm(raw).strip()
     forms = [s]
+    if s and not (force or "/" in s or s.startswith("~")) and _bare_name_resolves(s, root):
+        force = True
     if s and (force or "/" in s or s.startswith("~")):
         a, rootn = _abs_norm(s, root)
         forms.append(a)
         if a.startswith(rootn + "/"):
             forms.append(a[len(rootn) + 1:])
+    gm = None
+    if s and not force and not s.startswith(("/", "~")) and not re.match(r"^[A-Za-z]:", s):
+        gm = re.match(r"^((?:\./)*)([^/]+)((?:/.*)?)$", s)
+    if gm and GLOB_CHARS.search(gm.group(2)):
+        # the first component is a glob that matches a link of the project root (`echo x >> led?`, `led*/f`, `./l[e]d/f`):
+        # resolve each matching link (PR 15)
+        links = _root_links(root) or ()
+        for name in sorted(n for n in links if fnmatch.fnmatch(n, gm.group(2)))[:50]:
+            forms += _path_forms(name + gm.group(3), root, force=True)[1:]
     return forms
-
-
-def session_written_paths(ledger_path, session):
-    """Path keys this session was allowed to write via a file tool. Raises ValueError on an
-    unreadable record, so the caller fails closed."""
-    written = set()
-    if not ledger_path.exists():
-        return written
-    for n, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            raise ValueError(f"ledger line {n} is not valid JSON")
-        if (isinstance(rec, dict) and rec.get("session") == session and rec.get("decision") == "allow"
-                and rec.get("tool") in FILE_TOOLS and isinstance(rec.get("path"), str)):
-            written.add(rec["path"])
-    return written
 
 
 READ_ONLY = {"cat", "ls", "head", "tail", "less", "more", "wc", "grep", "rg", "diff", "stat", "file",
@@ -406,6 +604,8 @@ EXEC_VALUE_FLAGS = {"-c", "--pre", "--hostname-bin", "--config-env", "--exec-pat
 def _value_forms(value):
     """The value, and the pieces of it a path can hide in (KEY=!path, a:b lists)."""
     value = value.lstrip("!")
+    if re.match(r"(?i)^(?!file:)[a-z][a-z0-9+.-]*://", value):  # a URL is no path list: https://h/p must not split into //h/p (UNC)
+        return [value]
     return [value] + [p for p in re.split(r"[=!:;,|\s]+", value) if p]
 
 
@@ -463,8 +663,9 @@ def exec_suspect_tokens(cmd, depth=0, root=None, written=None):
 
 
 def _anchor_file(ledger_path):
-    """Opt-in anchor (1.5.2): when FIELD_ANCHOR_DIR is set, the gate keeps {count, hash} of the ledger's last record
-    in a file there, outside the project's .claude/state/. Point it at a directory the agent's tools cannot reach."""
+    """Opt-in anchor (1.5.2): when FIELD_ANCHOR_DIR is set, the gate keeps the hash of the ledger's last record (and
+    the one before it) in a file there, outside the project's .claude/state/. Point it at a directory the agent's
+    tools cannot reach."""
     d = os.environ.get("FIELD_ANCHOR_DIR")
     if not d:
         return None
@@ -472,21 +673,503 @@ def _anchor_file(ledger_path):
     return pathlib.Path(d) / (key + ".json")
 
 
-def anchor_problem(ledger_path, lines):
-    """Why the ledger (its non-empty `lines`) contradicts the anchor, else None. A deleted, emptied or truncated
-    ledger, or one whose record at the anchored position changed, is a rollback that a restarted chain hides."""
+def anchor_problem(ledger_path, last_hash):
+    """Why the ledger, whose last record hashes to `last_hash` ("0"*64 when empty or missing), contradicts the
+    anchor, else None. The anchor follows every append, so a deleted, emptied or truncated ledger no longer ends
+    where the anchor says. One record of lag is tolerated (a crash between the append and the anchor write)."""
     af = _anchor_file(ledger_path)
     if af is None or not af.exists():
         return None
     a = json.loads(af.read_text(encoding="utf-8"))
-    n = int(a["count"])
-    if len(lines) < n:
-        return f"the ledger holds {len(lines)} records but the anchor recorded {n}"
+    if last_hash in (a["hash"], a.get("prev")):
+        return None
+    return "the ledger no longer ends at the record the anchor holds (deleted, emptied or truncated)"
+
+
+# ---- incremental ledger index (fix/gate-incremental-ledger) -------------------------------------------------
+# The gate used to read the WHOLE ledger on every call: ledger_append for the last record's hash, and E5
+# (session_written_exec) for every record. ~13 us per ledger line, so ~4 s of CPU at 300 000 lines, against a
+# 10 s hook timeout that fails OPEN. Now the work is proportional to what was appended since the last call.
+#
+# What the old code checked, and what this keeps (nothing is relaxed):
+#   - the whole ledger decodes as strict UTF-8                          -> UnicodeDecodeError, denies E0
+#   - the last record is a JSON object with a "hash"                    -> exception, denies E0
+#   - E5 only: every non-blank line is valid JSON                        -> ValueError, denies E0
+#   - E5 only: the set of paths this session was allowed to write
+# The old code did NOT verify the hash chain per call (verify-ledger.py does, offline); neither does this.
+#
+# A sidecar in the protected state directory remembers how far the ledger was verified. It is only a cache:
+#   - missing, unparseable, wrong checksum/version/ledger, other file identity, file shorter than the offset,
+#     or tail bytes before the offset changed: ignored, the whole ledger is verified from byte 0;
+#   - each call re-hashes k random completed segments (k grows with the ledger, bounded: see _idx_sample) and
+#     re-derives the E5/ask entries of the first of them, and compares with the sidecar; a mismatch discards
+#     the sidecar and verifies from byte 0.
+# A full verification that cannot finish inside the time budget persists its progress and denies E0
+# ("being rebuilt"; the next call continues), instead of running into the hook timeout, which allows the call.
+IDX_VERSION = 1
+IDX_SEG_LINES = 512           # physical lines per checkpoint segment (re-derive one: ~10 ms; re-hash one: ~1.2 ms)
+IDX_CHECK_MIN = 4             # completed segments re-hashed per call: at least this many (all of them if fewer) ...
+IDX_CHECK_MAX = 32            # ... and at most this many, so the extra work per call is bounded (see _idx_sample)
+IDX_TAIL = 4096               # bytes before the offset whose digest binds the sidecar to the ledger
+IDX_PERSIST_BYTES = 128 * 1024  # persist the sidecar once this much new ledger was scanned (or after a rebuild)
+IDX_MAX_SIDECAR = 256 * 1024 * 1024
+EXEC_RULE = "E3-policy-executed"  # field-post.py's record; kept equal there by a test
+ASK_RULE = "E3-policy"
+
+
+class LedgerIndexBusy(RuntimeError):
+    """Full verification of the ledger did not finish inside the time budget (progress was saved)."""
+
+
+def _idx_pick(n):
+    """Which completed segment to re-check on this call (0 <= result < n). A test patches this."""
+    return int.from_bytes(os.urandom(4), "big") % n
+
+
+def _idx_sample(n):
+    """The completed segments (of n) to re-check on this call: k distinct indices, the first one drawn by _idx_pick.
+
+        k = min(n, max(IDX_CHECK_MIN, ceil(sqrt(n))), IDX_CHECK_MAX)
+
+    Every one of the k is re-hashed (its digest and line count against the sidecar); the first is also re-derived
+    (its E5 / ask entries), as the single random segment was before. A changed byte inside a completed segment
+    (an edit, a deleted line, invalid UTF-8, a line that is no longer JSON) changes that segment's digest, so it is
+    noticed on the first call that draws it, and then the whole ledger is verified from byte 0.
+    Detection: the k are distinct and uniform (rejection sampling over _idx_pick), drawn afresh on every call, so a
+    call misses one damaged segment with probability 1 - k/n, and c calls in a row miss it with probability
+    (1 - k/n)^c; the expected number of calls to notice it is n/k. With 512-line segments: 300 000 lines,
+    n = 585, k = 25: n/k = 23.4 calls, 99 % within 106 (one segment per call, as before: 585 and 2 692);
+    1 000 000 lines, n = 1 953, k = 32: n/k = 61, 99 % within 279 (one: 1 953 and 8 992). n <= IDX_CHECK_MIN:
+    every segment, every call. Cost: one re-derivation (~10 ms) plus at most IDX_CHECK_MAX - 1 re-hashes (~1.2 ms
+    each, ~37 ms) per call, measured on 400-byte records; a constant, so a call stays O(new events + k * segment).
+    A test that patches _idx_pick to a constant gets that one segment (the draws repeat, so no second distinct
+    index is found within the attempt bound); the other tests rely on that."""
+    picks = [_idx_pick(n)]
+    k = min(n, max(IDX_CHECK_MIN, math.isqrt(n - 1) + 1), IDX_CHECK_MAX)
+    if k == n:
+        return picks + [i for i in range(n) if i != picks[0]]
+    for _ in range(8 * k):  # k < n here: expected draws are at most 1.61 k (computed for n < 5000); the bound
+        # only stops a patched, non-random _idx_pick
+        if len(picks) == k:
+            break
+        i = _idx_pick(n)
+        if i not in picks:
+            picks.append(i)
+    return picks
+
+
+def _idx_sidecar(ledger_path, root):
+    base = pathlib.Path(root) / STATE_DIR if root is not None else pathlib.Path(ledger_path).parent
+    tag = hashlib.sha256(os.path.abspath(str(ledger_path)).encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    return base / f"field-ledger-{tag}.idx"
+
+
+def _idx_new(ident):
+    return {"id": ident, "off": 0, "n": 0, "cl": 0, "head": "", "tail": "", "bad": 0,
+            "segs": [], "posts": {}, "asks": {}}
+
+
+def _idx_pieces(tgt, chunk, line_off, seg_i):
+    """Fold one physical ledger line (bytes without its \\n) into tgt, exactly as the old whole-file scans saw
+    it: text.splitlines() pieces, blank pieces skipped (but counted), a piece that is not JSON recorded in
+    tgt['bad'] (first one wins). UnicodeDecodeError propagates (the old read_text raised it)."""
+    text = chunk.decode("utf-8")
+    for piece in (text.splitlines() or [""]):
+        tgt["n"] += 1
+        if not piece.strip():
+            continue
+        try:
+            rec = json.loads(piece)
+        except (ValueError, RecursionError):
+            if not tgt["bad"]:
+                tgt["bad"] = tgt["n"]
+            continue
+        if not isinstance(rec, dict):
+            continue
+        if isinstance(rec.get("hash"), str):
+            tgt["head"] = rec["hash"]
+        sess = rec.get("session")
+        if not isinstance(sess, str):
+            continue
+        if rec.get("decision") == "allow" and rec.get("tool") in FILE_TOOLS and isinstance(rec.get("path"), str):
+            tgt["posts"].setdefault(sess, {}).setdefault(rec["path"], seg_i)
+        tuid = rec.get("tool_use_id")
+        if isinstance(tuid, str):
+            kind = "x" if rec.get("rule") == EXEC_RULE else (
+                "a" if rec.get("decision") == "ask" and rec.get("rule") == ASK_RULE else None)
+            if kind and json.dumps(tuid)[1:-1] in piece:  # field-post.py's needle test, applied to the id itself
+                tgt["asks"][json.dumps([sess, tuid])] = [kind, line_off]
+
+
+def _idx_scan(fh, state, deadline, open_data=b""):
+    """Verify and index the complete lines from state['off'] to EOF, advancing state line by line.
+    open_data: the bytes of the open segment before state['off'] (its digest covers them too).
+    Returns (rest_bytes, rest_offset): the unterminated tail, not part of state. Raises LedgerIndexBusy
+    (state is consistent at the last complete line) when the deadline passes."""
+    segh = hashlib.sha256()
+    segh.update(open_data)
+    fh.seek(state["off"])
+    buf, base = b"", state["off"]
+    while True:
+        block = fh.read(1 << 20)
+        if not block:
+            break
+        buf += block
+        pos = 0
+        while True:
+            j = buf.find(b"\n", pos)
+            if j < 0:
+                break
+            _idx_pieces(state, buf[pos:j], base + pos, len(state["segs"]))
+            segh.update(buf[pos:j + 1])
+            pos = j + 1
+            state["cl"] += 1
+            state["off"] = base + pos
+            if state["cl"] % IDX_SEG_LINES == 0:
+                state["segs"].append([state["off"], segh.hexdigest(), state["n"]])
+                segh = hashlib.sha256()
+        buf, base = buf[pos:], base + pos
+        if deadline is not None and time.monotonic() > deadline:
+            raise LedgerIndexBusy("ledger index is being rebuilt (%d bytes verified); the next call continues"
+                                  % state["off"])
+    return buf, base
+
+
+def _idx_tail_digest(fh, off):
+    start = max(0, off - IDX_TAIL)
+    fh.seek(start)
+    return hashlib.sha256(fh.read(off - start)).hexdigest()
+
+
+def _idx_encode(state, ledger_path):
+    meta = {"v": IDX_VERSION, "ledger": os.path.abspath(str(ledger_path)), "id": state["id"], "off": state["off"],
+            "n": state["n"], "cl": state["cl"], "head": state["head"], "tail": state["tail"], "bad": state["bad"],
+            "segs": state["segs"]}
+    body = json.dumps({"posts": state["posts"], "asks": state["asks"]}, sort_keys=True).encode("utf-8")
+    meta["psum"] = hashlib.sha256(body).hexdigest()
+    meta["sum"] = hashlib.sha256(json.dumps(meta, sort_keys=True).encode("utf-8")).hexdigest()
+    return json.dumps(meta, sort_keys=True).encode("utf-8") + b"\n" + body + b"\n"
+
+
+def _idx_decode(raw, ledger_path):
+    """The state a sidecar claims, or None if it is not a well-formed sidecar of this ledger."""
     try:
-        h = json.loads(lines[n - 1])["hash"]
+        head, _, body = raw.partition(b"\n")
+        meta = json.loads(head)
+        sums = meta.pop("sum")
+        if sums != hashlib.sha256(json.dumps(meta, sort_keys=True).encode("utf-8")).hexdigest():
+            return None
+        body = body[:-1] if body.endswith(b"\n") else body
+        if meta.get("psum") != hashlib.sha256(body).hexdigest() or meta.get("v") != IDX_VERSION:
+            return None
+        if meta.get("ledger") != os.path.abspath(str(ledger_path)):
+            return None
+        data = json.loads(body)
+        st = {"id": meta["id"], "off": meta["off"], "n": meta["n"], "cl": meta["cl"], "head": meta["head"],
+              "tail": meta["tail"], "bad": meta["bad"], "segs": meta["segs"],
+              "posts": data["posts"], "asks": data["asks"]}
+        ok = (isinstance(st["id"], list) and len(st["id"]) == 2 and all(type(x) is int for x in st["id"])
+              and all(type(st[k]) is int and st[k] >= 0 for k in ("off", "n", "cl", "bad"))
+              and isinstance(st["head"], str) and isinstance(st["tail"], str) and isinstance(st["segs"], list)
+              and isinstance(st["posts"], dict) and isinstance(st["asks"], dict))
+        if not ok or not 0 <= st["cl"] - len(st["segs"]) * IDX_SEG_LINES < IDX_SEG_LINES:
+            return None  # the segments tile the first len(segs)*IDX_SEG_LINES lines; fewer than one more is open
+        prev = 0
+        for s in st["segs"]:
+            if not (isinstance(s, list) and len(s) == 3 and type(s[0]) is int and type(s[2]) is int
+                    and isinstance(s[1], str) and prev < s[0] <= st["off"]):
+                return None
+            prev = s[0]
+        for d in st["posts"].values():
+            if not isinstance(d, dict) or not all(type(v) is int and 0 <= v <= len(st["segs"]) for v in d.values()):
+                return None
+        for v in st["asks"].values():
+            if not (isinstance(v, list) and len(v) == 2 and v[0] in ("a", "x") and type(v[1]) is int
+                    and 0 <= v[1] < st["off"]):
+                return None
+        return st
     except Exception:
-        h = None
-    return None if h == a["hash"] else f"record {n} differs from the anchor"
+        return None
+
+
+def _idx_load(side, ledger_path):
+    try:
+        if side.stat().st_size > IDX_MAX_SIDECAR:
+            return None
+        return _idx_decode(side.read_bytes(), ledger_path)
+    except OSError:
+        return None
+
+
+def _idx_store(side, state, ledger_path):
+    """Atomic: temp file in the same directory, then rename. A failure leaves the old sidecar (or none)."""
+    tmp = side.with_name(side.name + f".{os.getpid()}.tmp")
+    try:
+        side.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0), 0o600)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(_idx_encode(state, ledger_path))
+        for attempt in range(5):  # Windows: the rename fails while a reader (field-post.py) has the file open
+            try:
+                os.replace(tmp, side)
+                return
+            except PermissionError:
+                time.sleep(0.01)
+    except OSError:
+        pass
+    try:
+        os.unlink(tmp)
+    except OSError:
+        pass
+
+
+def _idx_matches(state, fh, st):
+    """The sidecar describes this file: same identity, not shorter than the offset, same bytes just before it."""
+    if state["id"] != [st.st_dev, st.st_ino] or st.st_size < state["off"]:
+        return False
+    return _idx_tail_digest(fh, state["off"]) == state["tail"]
+
+
+def _idx_region_ok(state, data, start, seg_i, n_start, n_end, lines, digest=None):
+    """The ledger bytes data = ledger[start:start+len(data)] (whole lines) agree with the sidecar: `lines` physical
+    lines, the segment digest (completed segments), and the E5 / ask entries and the first bad piece the sidecar
+    holds for them. Re-derives all of it from the bytes, so a sidecar edited to hide or invent an entry fails."""
+    end = start + len(data)
+    if data.count(b"\n") != lines or (data and not data.endswith(b"\n")):
+        return False
+    if digest is not None and hashlib.sha256(data).hexdigest() != digest:
+        return False
+    der = {"n": n_start, "bad": 0, "head": "", "posts": {}, "asks": {}}
+    pos = 0
+    while pos < len(data):
+        j = data.index(b"\n", pos)
+        _idx_pieces(der, data[pos:j], start + pos, seg_i)
+        pos = j + 1
+    if der["n"] != n_end:
+        return False
+    if der["head"] and der["head"] != state["head"] and end == state["off"]:
+        return False
+    if der["bad"]:
+        if not state["bad"] or state["bad"] > der["bad"]:
+            return False
+    elif n_start < state["bad"] <= n_end:
+        return False
+    for sess, d in der["posts"].items():
+        for path in d:
+            seen = state["posts"].get(sess, {}).get(path)
+            if seen is None or seen > seg_i:
+                return False
+    for sess, d in state["posts"].items():
+        for path, seen in d.items():
+            if seen == seg_i and path not in der["posts"].get(sess, {}):
+                return False
+    for key, (kind, off) in der["asks"].items():
+        got = state["asks"].get(key)
+        if got is None or got[1] < off or (got[1] < end and got != [kind, off]):
+            return False
+    for key, got in state["asks"].items():
+        if start <= got[1] < end and der["asks"].get(key) != got:
+            return False
+    return True
+
+
+def _idx_trusted(state, fh):
+    """Check the sidecar's claims against the ledger: the open segment (every call: it holds the newest, and
+    in practice the only, session writes E5 matters for) and k completed segments chosen at random (_idx_sample):
+    all k re-hashed, the first also re-derived. Returns the open segment's bytes (the scan hashes on from them)
+    or None if a claim is false."""
+    segs = state["segs"]
+    start, n_start = (segs[-1][0], segs[-1][2]) if segs else (0, 0)
+    fh.seek(start)
+    data = fh.read(state["off"] - start)
+    if len(data) != state["off"] - start:
+        return None
+    if not _idx_region_ok(state, data, start, len(segs), n_start, state["n"], state["cl"] - len(segs) * IDX_SEG_LINES):
+        return None
+    for j, i in enumerate(_idx_sample(len(segs)) if segs else ()):
+        s0, n0 = (segs[i - 1][0], segs[i - 1][2]) if i else (0, 0)
+        fh.seek(s0)
+        seg = fh.read(segs[i][0] - s0)
+        if j == 0:
+            if not _idx_region_ok(state, seg, s0, i, n0, segs[i][2], IDX_SEG_LINES, segs[i][1]):
+                return None
+        elif seg.count(b"\n") != IDX_SEG_LINES or hashlib.sha256(seg).hexdigest() != segs[i][1]:
+            return None  # the bytes the sidecar indexed changed: everything it derived from them is in doubt
+    return data
+
+
+_VIEW = {}
+
+
+def ledger_view(ledger_path, root=None, deadline=None):
+    """Verified state of the ledger: dict(state, rest) with the complete lines in state and the
+    unterminated tail (if any) folded into `rest`. Reads only what was appended since the last verification
+    unless the sidecar is unusable. Raises what the old whole-file read raised (OSError, UnicodeDecodeError)
+    and LedgerIndexBusy when a full verification cannot finish before `deadline` (a time.monotonic() value)."""
+    ledger_path = pathlib.Path(ledger_path)
+    try:
+        st = ledger_path.stat()
+    except FileNotFoundError:
+        return {"state": _idx_new([0, 0]), "rest": None}
+    ckey = (str(ledger_path), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns)
+    if _VIEW.get("key") == ckey:
+        return _VIEW["view"]
+    side = _idx_sidecar(ledger_path, root)
+    ident = [st.st_dev, st.st_ino]
+    with ledger_path.open("rb") as fh:
+        state = _idx_load(side, ledger_path)
+        open_data = b""
+        if state is not None:
+            try:
+                open_data = _idx_trusted(state, fh) if _idx_matches(state, fh, st) else None
+            except ValueError:  # bytes the sidecar vouched for do not decode: do not trust it; the rebuild decides
+                open_data = None
+            if open_data is None:
+                state = None
+        fresh = state is None
+        if fresh:
+            state, open_data = _idx_new(ident), b""
+        start = state["off"]
+        try:
+            rest, rest_off = _idx_scan(fh, state, deadline, open_data)
+        except LedgerIndexBusy:
+            state["tail"] = _idx_tail_digest(fh, state["off"])
+            _idx_store(side, state, ledger_path)
+            raise
+        except BaseException:
+            # The ledger does not verify (invalid UTF-8, ...). Drop the sidecar so that the next call fails the same way
+            # instead of trusting a stale prefix on the calls where the random re-check misses the damage.
+            try:
+                os.unlink(side)
+            except OSError:
+                pass
+            raise
+        state["tail"] = _idx_tail_digest(fh, state["off"])
+        if fresh or state["off"] - start >= IDX_PERSIST_BYTES:
+            _idx_store(side, state, ledger_path)
+    ov = None
+    if rest:
+        ov = {"n": state["n"], "bad": 0, "head": "", "posts": {}, "asks": {}}
+        _idx_pieces(ov, rest, rest_off, len(state["segs"]))
+    view = {"state": state, "rest": ov}
+    _VIEW.clear()
+    _VIEW.update(key=ckey, view=view)
+    return view
+
+
+def session_written_paths(ledger_path, session, root=None, deadline=None):
+    """Path keys this session was allowed to write via a file tool. Raises ValueError on an
+    unreadable record, so the caller fails closed. Same result as the old whole-file scan."""
+    if not isinstance(session, str):  # a non-string session id compares equal to non-string record values
+        return _session_written_paths_full(ledger_path, session)
+    if not pathlib.Path(ledger_path).exists():
+        return set()
+    view = ledger_view(ledger_path, root, deadline)
+    state, ov = view["state"], view["rest"]
+    bad = state["bad"] or (ov["bad"] if ov else 0)
+    if bad:
+        raise ValueError(f"ledger line {bad} is not valid JSON")
+    out = set(state["posts"].get(session, ()))
+    if ov:
+        out.update(ov["posts"].get(session, ()))
+    return out
+
+
+def _session_written_paths_full(ledger_path, session):
+    written = set()
+    if not ledger_path.exists():
+        return written
+    for n, line in enumerate(ledger_path.read_text(encoding="utf-8").splitlines(), 1):
+        if not line.strip():
+            continue
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            raise ValueError(f"ledger line {n} is not valid JSON")
+        if (isinstance(rec, dict) and rec.get("session") == session and rec.get("decision") == "allow"
+                and rec.get("tool") in FILE_TOOLS and isinstance(rec.get("path"), str)):
+            written.add(rec["path"])
+    return written
+
+
+def ledger_find_ask(ledger_path, root, session, tool_use_id):
+    """field-post.py's lookup: 'duplicate', the newest matching ask record, or None, as a newest-first scan of
+    the whole ledger would answer. Uses the sidecar for the verified prefix (read-only; no lock) and scans
+    the bytes after its offset directly; any doubt about the sidecar scans the whole ledger. The sidecar is
+    used only when the gate itself would use it: it matches the file (_idx_matches) AND its claims re-derive from
+    the ledger (_idx_trusted: the open segment and k sampled segments). A hit is confirmed by reading the one
+    line it names, for an executed record ('duplicate') as for an ask; a hit that does not confirm scans the
+    whole ledger."""
+    ledger_path = pathlib.Path(ledger_path)
+    needle = json.dumps(tool_use_id)[1:-1]
+
+    def judge(piece):
+        if needle not in piece:
+            return None
+        try:
+            rec = json.loads(piece)
+        except ValueError:
+            return None
+        if not isinstance(rec, dict) or rec.get("tool_use_id") != tool_use_id or rec.get("session") != session:
+            return None
+        if rec.get("rule") == EXEC_RULE:
+            return "duplicate"
+        if rec.get("decision") == "ask" and rec.get("rule") == ASK_RULE:
+            return rec
+        return None
+
+    def scan(text):
+        for piece in reversed(text.splitlines()):
+            r = judge(piece)
+            if r is not None:
+                return r
+        return None
+
+    off = 0
+    state = None
+    if isinstance(session, str):
+        state = _idx_load(_idx_sidecar(ledger_path, root), ledger_path)
+        try:
+            with ledger_path.open("rb") as fh:
+                if (state is not None and _idx_matches(state, fh, ledger_path.stat())
+                        and _idx_trusted(state, fh) is not None):
+                    off = state["off"]
+                    fh.seek(off)
+                    r = scan(fh.read().decode("utf-8"))
+                    if r is not None:
+                        return r
+                    hit = state["asks"].get(json.dumps([session, tool_use_id]))
+                    if hit is None:
+                        return None
+                    fh.seek(hit[1])
+                    r = scan(fh.readline().decode("utf-8"))
+                    if (hit[0] == "x" and r == "duplicate") or (hit[0] == "a" and isinstance(r, dict)):
+                        return r
+        except (OSError, ValueError):
+            pass
+    return scan(ledger_path.read_text(encoding="utf-8"))  # no usable sidecar, or it lied: the old full scan
+
+
+def _ledger_last_hash(ledger_path):
+    """The "hash" of the last record ("0"*64 for an empty ledger), reading only the end of the file. Raises what
+    the old whole-file read raised for a last record that is not a JSON object with a hash."""
+    size = ledger_path.stat().st_size
+    if size == 0:
+        return "0" * 64
+    chunk = 8192
+    with ledger_path.open("rb") as fh:
+        while True:
+            start = max(0, size - chunk)
+            fh.seek(start)
+            data = fh.read(size - start)
+            if start > 0:
+                j = data.find(b"\n")
+                data = data[j + 1:] if j >= 0 else b""  # begin on a line boundary
+            s = data.decode("utf-8").strip()
+            if s or start == 0:
+                lines = s.splitlines()
+                return json.loads(lines[-1])["hash"] if lines else "0" * 64
+            chunk *= 2
 
 
 def ledger_append(ledger_path, record):
@@ -494,14 +1177,9 @@ def ledger_append(ledger_path, record):
     if not ledger_path.exists():
         # New ledgers are owner-only on POSIX (no-op on Windows). Existing files are left as they are.
         os.close(os.open(str(ledger_path), os.O_CREAT | os.O_WRONLY, 0o600))
-    prev = "0" * 64
-    lines = []
-    if ledger_path.exists():
-        lines = ledger_path.read_text(encoding="utf-8").strip().splitlines()
-        if lines:
-            prev = json.loads(lines[-1])["hash"]
-    problem = anchor_problem(ledger_path, lines)
-    if problem:  # fail closed: main() turns this into an E0 deny. Remove the anchor file (a human) to start over.
+    prev = _ledger_last_hash(ledger_path)
+    problem = anchor_problem(ledger_path, prev)
+    if problem:  # fail closed: main() turns this into an E0 deny. A human removes the anchor file to start over.
         raise RuntimeError(f"ledger rolled back ({problem}); fail-closed")
     record["prev_hash"] = prev
     body = json.dumps(record, sort_keys=True)
@@ -512,7 +1190,7 @@ def ledger_append(ledger_path, record):
     if af is not None:
         af.parent.mkdir(parents=True, exist_ok=True)
         tmp = af.with_name(af.name + ".tmp")
-        tmp.write_text(json.dumps({"count": len(lines) + 1, "hash": record["hash"]}), encoding="utf-8")
+        tmp.write_text(json.dumps({"hash": record["hash"], "prev": prev}), encoding="utf-8")
         os.replace(tmp, af)
 
 
@@ -597,13 +1275,25 @@ def string_leaves(value):
             yield from string_leaves(v)
 
 
+PS_COLON_PARAM = re.compile(r"^-([A-Za-z]{2,}):(.+)$")
+# Parameters whose value is a path (PowerShell accepts any unique prefix: -Dest:, -Lit:). Other values (-Format:H:mm,
+# -Pattern:a:b, -Value:x:y) are data and must not be read as drive-relative paths.
+PS_PATH_PARAMS = ("path", "literalpath", "pspath", "destination", "filepath", "outfile", "name", "newname", "target",
+                  "outputpath")
 PS_TOKEN = re.compile(r"'([^']*)'|\"([^\"]*)\"|([^\s;|&(){}<>,'\"`=]+)")
 
 
 def ps_tokens(cmd):
     """PowerShell text -> candidate path tokens. Deliberately crude: quoted strings whole, else
     runs of non-separator characters. E5 checks every one (no read-only allowlist)."""
-    return [a or b or c for a, b, c in PS_TOKEN.findall(cmd or "")]
+    toks = [a or b or c for a, b, c in PS_TOKEN.findall(cmd or "")]
+    # -Path:x, -LiteralPath:'x y', -Destination:x bind the value to the parameter with a colon (PR 15): the value is a
+    # token of its own. The parameter name is letters only, so http://h:80 is not split.
+    for tok in list(toks):
+        m = PS_COLON_PARAM.match(tok)
+        if m and any(full.startswith(m.group(1).lower()) for full in PS_PATH_PARAMS):
+            toks.append(m.group(2))
+    return toks
 
 
 PS_FOLD = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
@@ -660,7 +1350,75 @@ def _xargs_mutating(stage):
 def _interpreter_sink(stage):
     """True for a stage that runs what the pipeline feeds it (`... | sh`, `... | bash -s`, `... | python3`)."""
     i = _command_index([w for w, _q in stage])
-    return i is not None and bool(SHELL_C.match(_base(stage[i][0])) or INTERPRETER_RE.match(_base(stage[i][0])))
+    return i is not None and bool(SHELL_C.match(_base(stage[i][0])) or INTERPRETER_RE.match(_base(stage[i][0]))
+                                  )
+
+
+# cmd's command switch: /c /k /r, any case, Git Bash's //c (MSYS turns a leading // into one /). cmd takes the rest of
+# the token as the command (`/c"echo x"`, `"/c echo x"`, `//cecho x`), so the switch is matched at the start of a word.
+CMD_SWITCH = re.compile(r"^(?:/[A-Za-z](?::[A-Za-z0-9]+)?)*?/{1,2}[ckrCKR](.*)$", re.S)  # also bundled: /d/c, /s/c, /v:on/c
+CMD_BUILTINS = {"del": "rm", "erase": "rm", "rd": "rmdir", "move": "mv", "ren": "mv",
+                "rename": "mv", "copy": "cp", "xcopy": "cp"}
+
+
+def _cmd_line(line):
+    """The command line after cmd /c, as the Bash analysis can read it: cmd's `^` escape removed (field-m^anifest.yaml
+    is field-manifest.yaml), backslashes as separators, and cmd's file commands renamed to their Bash twins at command
+    position (del x -> rm x, so `del field-manifest.*` is judged like `rm field-manifest.*`)."""
+    line = _norm(line.replace("^", "").replace('"', " ")).strip()  # a quote only splits words for cmd: del"x" is del x
+    line = re.sub(r"[()&|]+", " & ", line)  # ( ) & | split commands whether or not spaces surround them
+    # call x, start [/b] x, do x, else x, `if <condition> x` and a leading @ leave x at command position: read them as
+    # command separators. rd/s/q (no spaces) is rd /s /q.
+    line = re.sub(r"(?i)(?<![\w./-])(?:call|start(?:\s+/\w+(?::\S+)?)*|do|else)\s+"
+                  r"|(?<![\w./-])if\s+(?:/i\s+)?(?:not\s+)?(?:exist\s+\S+|defined\s+\S+|errorlevel\s+\d+|\S+==\S+)\s+",
+                  "& ", line).replace("@", "")
+    return re.sub(r"(?i)(^|[&|;(]\s*)(del|erase|rd|rmdir|move|ren|rename|copy|xcopy)(?=[\s/]|$)",
+                  lambda m: m.group(1) + CMD_BUILTINS.get(m.group(2).lower(), "rmdir") + " ", line)
+
+
+def cmd_payload(words):
+    """The command line cmd runs, from the words after the cmd command word: everything from the first /c, /k or /r
+    switch (the rest of that word included), else None."""
+    for n, w in enumerate(words):
+        m = CMD_SWITCH.match(w)
+        if m:
+            return _cmd_line(" ".join([m.group(1)] + list(words[n + 1:])))
+    return None
+
+
+BACKSLASH = chr(92)
+
+
+def _lines_of(word):
+    """A quoted word as lines: real newlines and a literal backslash-n (printf 'rd x\n') both end a line."""
+    return word.replace(BACKSLASH + "n", "\n").replace(BACKSLASH + "r", "\n").split("\n")
+
+
+def cmd_stdin_lines(cmd):
+    """When the command line runs a cmd at all (`echo "rd /s /q .claude" | cmd /k`, `cmd <<< "..."`, `cmd <<EOF`),
+    cmd may read command lines from stdin whatever its switches (/k keeps reading): every piece of the text is a
+    candidate cmd line: each quoted or spaced word (split at newlines), each stage, and each stage without its first
+    word (`echo rd x | cmd`: the producer is not part of the line). Returns those lines read as cmd lines (_cmd_line);
+    [] when no cmd runs. An over-approximation that only matters when such a line touches a protected path."""
+    try:
+        stages = [st for pipe in _split(_shell_words(cmd)) for st in pipe]
+    except ValueError:
+        return []
+    runs_cmd = False
+    for st in stages:
+        i = _command_index([w for w, _q in st])
+        if i is not None and _base(st[i][0]) == "cmd":
+            runs_cmd = True
+    if not runs_cmd:
+        return []
+    lines = []
+    for st in stages:
+        words = [w for w, _q in st]
+        for w, q in st:
+            if q or " " in w:
+                lines += _lines_of(w)
+        lines += [" ".join(words), " ".join(words[1:])]
+    return [_cmd_line(ln) for ln in dict.fromkeys(lines) if ln.strip()]
 
 
 def _stage_marks(stage, i, hits):
@@ -686,6 +1444,11 @@ def _stage_marks(stage, i, hits):
             else:  # inplace
                 sel = args if any(re.match(r"^-[a-zA-Z]*i|^--in-place", stage[j][0]) for j in rest) else []
             marked.update((j, False) for j in sel)
+            break
+        if b == "cmd":  # cmd [/d /s /v:on] /c <command line> (PR 15)
+            payload = cmd_payload([stage[j][0] for j in rest])
+            if payload is not None:
+                nested.append(payload)
             break
         if SHELL_C.match(b):
             nested += [stage[j + 1][0] for j in rest[:-1]
@@ -716,6 +1479,11 @@ def bash_e2_words(cmd, root, hits, depth=0):
     except ValueError:
         return ps_tokens(cmd), []
     plain, globs = [], []
+    if depth == 0:
+        for ln in cmd_stdin_lines(cmd):
+            p, g = bash_e2_words(ln, root, hits, depth + 1)
+            plain += p
+            globs += g
     for pipe in _split(words):
         xargs_mut = any(_xargs_mutating(st) for st in pipe)
         sink = any(_interpreter_sink(st) for st in pipe)  # echo "rm x" | sh: upstream quoted text is a command
@@ -728,8 +1496,12 @@ def bash_e2_words(cmd, root, hits, depth=0):
                 marked.update(m)
                 if sink and not _interpreter_sink(stage):
                     nested += [w for w, q in stage if q]
-                for n in nested if depth < 3 else []:
-                    p, g = bash_e2_words(n, root, hits, depth + 1)
+                for n in nested:
+                    if depth < 3:
+                        p, g = bash_e2_words(n, root, hits, depth + 1)
+                    else:  # beyond the cap: every word of the rest counts, a protected word or glob anywhere denies
+                        p = ps_tokens(n)
+                        g = [x for x in p if GLOB_CHARS.search(x)]
                     plain += p
                     globs += g
                 if xargs_mut:
@@ -742,6 +1514,14 @@ def bash_e2_words(cmd, root, hits, depth=0):
                 if GLOB_CHARS.search(w) and (not q or quoted_glob_ok):
                     globs.append(w)
     return plain, globs
+
+
+def ps_as_bash(cmd):
+    """PowerShell text for the Bash analysis: backslashes as separators, { } script blocks as command separators
+    (`if ($x) { cmd /c "..." }` has cmd at command position, like `& { ... }`), ( ) $( ) @( ) groups too, at any depth."""
+    keep = "\ue001"  # a backslash-quote is an escaped quote in a native command's argument, not a path separator
+    text = _norm(cmd.replace(chr(92) + chr(34), keep)).replace(keep, chr(92) + chr(34))
+    return re.sub(r"[(){}]", " ; ", text)
 
 
 def e2_targets(tool, ti, root, hits, cwd=None):
@@ -767,8 +1547,14 @@ def e2_targets(tool, ti, root, hits, cwd=None):
         cmd = shell_command(tool, ti)
         out.append(_norm(cmd))
         toks = text_tokens(cmd)
+        if "^" in cmd and re.search(r"(?i)\bcmd(?:\.exe)?\b", cmd):  # cmd's ^ escape: the OS sees the text without it
+            toks += text_tokens(cmd.replace("^", ""))
         if ">" in cmd or any(t.casefold() in PS_MUTATING for t in toks):
             globs = [t for t in ps_tokens(cmd) if GLOB_CHARS.search(t) and not re.search(r"\s", t)]
+        if re.search(r"(?i)\bcmd(?:\.exe)?\b", cmd):  # a cmd line inside the text: its words and globs, read as Bash (PR 15)
+            p, g = bash_e2_words(ps_as_bash(cmd), root, hits)
+            toks += p
+            globs += g
     else:  # MCP and other tools
         for v in string_leaves(ti):
             out.append(_norm(v).strip())
@@ -794,8 +1580,9 @@ def state_dir_rules(flag, root):
     if k.startswith(abs_state + "/"):
         exempt.append(re.escape(k[len(abs_state) + 1:]))
     tail = r"(?:/(?!(?:%s)$)|$)" % "|".join(exempt)
-    return [("^" + re.escape(abs_state) + tail, "the state directory"),
-            ("^" + re.escape(STATE_DIR) + tail, "the state directory")]
+    pre = r"(?:-[A-Za-z]+:)?"  # a PowerShell colon-bound parameter prefix: -Path:.claude/state/x
+    return [("^" + pre + re.escape(abs_state) + tail, "the state directory"),
+            ("^" + pre + re.escape(STATE_DIR) + tail, "the state directory")]
 
 
 def _lean(pat):
@@ -838,26 +1625,70 @@ def _find_wipes(seg, i):
     return deletes and not any(w in ("-name", "-iname", "-path", "-ipath", "-regex", "-iregex") for w in rest)
 
 
-def dir_wipe_target(cmd, root, guard=()):
+# Label for text the wipe check cannot read to the end (nested deeper than three levels) that names a
+# removal verb or a protected path: denied, not allowed (fail closed).
+BEYOND = "a command line nested more than three levels deep that names a removal or a protected path (not analysed, so denied)"
+RISKY = re.compile(r"(?i)(?<![A-Za-z0-9_-])(?:rm|rmdir|rd|del|erase|unlink|shred|mv|move|ren|rename|remove-item|ri|robocopy|format)(?![A-Za-z0-9_-])"
+                   r"|-delete|field-manifest|hooks[.]json|[.]claude|settings(?:[.]local)?[.]json|ESTATE_KILL|field-ledger")
+
+
+def _risky(text):
+    """True when text holds a removal verb or a built-in protected name: the text a fail-closed check must not wave through."""
+    return bool(RISKY.search(_norm(text)))
+
+
+def dir_wipe_target(cmd, root, guard=(), depth=0):
     """Label of an argument of a Bash rm/rmdir/mv/shred/unlink (or an unfiltered find -delete) that
     is the project directory, one of its parents or the .claude/ directory (where the state and
-    settings live) or a directory in `guard` ((absolute path, label) pairs), else None."""
+    settings live) or a directory in `guard` ((absolute path, label) pairs), else None. Follows bash -c / sh -c /
+    -Command payloads, cmd payloads and cmd reading stdin, three levels deep. An accident guard, not a security
+    boundary: it reads text, not the process the command becomes (see the known-bypass register in the README)."""
     rootn, _win = _root_norm(root)
     try:
         segs = _segments(cmd)
-    except ValueError:
+    except ValueError:  # unbalanced quotes: the E5 tokenisation already denies the call (E0, fail closed)
         return None
+    if depth == 0:  # cmd reading its lines from a pipe, here-string or here-document
+        for ln in cmd_stdin_lines(cmd):
+            hit = dir_wipe_target(ln, root, guard, 1)
+            if hit:
+                return hit
     for seg in segs:
         i = _command_index(seg)
         if i is None:
             continue
         b = _base(seg[i])
+        if b == "cmd":  # cmd /c "rd /s /q .claude" wipes like rmdir/rm -r (PR 15)
+            payload = cmd_payload(seg[i + 1:])
+            if payload is not None and depth >= 3:
+                if _risky(payload):
+                    return BEYOND
+            elif payload is not None:
+                hit = dir_wipe_target(payload, root, guard, depth + 1)
+                if hit:
+                    return hit
+        if SHELL_C.match(b):  # bash -c 'rm -r .claude', sh -c, pwsh -Command: judge the payload like top level
+            for n, w in enumerate(seg[i + 1:-1]):
+                if re.match(r"^-[a-zA-Z]*c$", w) or w == "-Command":
+                    payload = seg[i + 2 + n]
+                    if depth >= 3:
+                        if _risky(payload):
+                            return BEYOND
+                        continue
+                    hit = dir_wipe_target(payload, root, guard, depth + 1)
+                    if hit:
+                        return hit
         if b not in DESTRUCTIVE and not (b == "find" and _find_wipes(seg, i)):
             continue
+        args = [x for x in seg[i + 1:] if not x.startswith("-")]
+        if b == "mv" and len(args) >= 2:  # mv x . moves x: the last argument is the destination, not removed
+            args = args[:-1]
         for t in seg[i + 1:]:
             if t.startswith("-"):
                 if b == "find":
                     break  # find's options start here; the start directories came before
+                continue
+            if b == "mv" and t not in args:
                 continue
             a, _ = _abs_norm(t, root)
             if a == rootn + "/.claude":
@@ -870,6 +1701,30 @@ def dir_wipe_target(cmd, root, guard=()):
     return None
 
 
+# PowerShell code that is a string until it runs: iex / Invoke-Expression, [scriptblock]::Create, & ("..."), & $x
+PS_EVAL = re.compile(r"(?i)(?<![\w-])(?:iex|invoke-expression)(?![\w-])|\[scriptblock\]::create"
+                     r"|(?:^|[;|&({\s])&\s*[(\"'$]")
+
+
+def unreadable_input(cmd):
+    """Reason when the command hands a shell its commands in a form the gate cannot read: cmd reading a file
+    (`cmd < script.bat`) or an encoded PowerShell command (-EncodedCommand / -enc). Denied outright (fail closed)."""
+    if re.search(r"(?i)\b(?:powershell|pwsh)(?:[.]exe)?\b[^|;&]*\s-(?:e|ec|enc|encodedcommand)\b", cmd):
+        return "an encoded PowerShell command the gate cannot read"
+    if PS_EVAL.search(cmd) and _risky(cmd):  # a string run as code (also built by concatenation): unreadable
+        return "a PowerShell string evaluated as code (iex, [scriptblock]::Create, & (...)) in a line that names a removal or a protected path"
+    try:
+        stages = [st for pipe in _split(_shell_words(cmd)) for st in pipe]
+    except ValueError:
+        return None
+    for st in stages:
+        words = [w for w, _q in st]
+        i = _command_index(words)
+        if i is not None and _base(words[i]) == "cmd" and "<" in words[i + 1:]                 and words[words.index("<", i + 1) + 1:][:1] not in (["/dev/null"], ["nul"], ["NUL"]):
+            return "cmd reading its commands from a file or process the gate cannot see"
+    return None
+
+
 def shell_pattern_hit(tool, cmd, globs, names, root, guard=()):
     """E2 reason when one of the selected glob/brace words expands to a governance path, or (Bash)
     when rm/rmdir/mv/shred/unlink is aimed at the project directory, a parent or .claude/; else None."""
@@ -877,7 +1732,13 @@ def shell_pattern_hit(tool, cmd, globs, names, root, guard=()):
         hit = glob_hit(w, names, root)
         if hit:
             return f"shell glob/brace pattern expands to {hit}"
+    if tool in ("Bash", "PowerShell"):
+        why = unreadable_input(cmd)
+        if why:
+            return why
     hit = dir_wipe_target(cmd, root, guard) if tool == "Bash" else None
+    if not hit and tool == "PowerShell":  # PowerShell text reads as a Bash line well enough: cmd /c "..." and rm/mv/rmdir -r
+        hit = dir_wipe_target(ps_as_bash(cmd), root, guard)
     return f"destructive command aimed at {hit}" if hit else None
 
 
@@ -1256,7 +2117,9 @@ def enforce(inp, manifest, root, ledger_path, store_source):
             except re.error:
                 deny(ledger_path, event, "E0", "invalid session_written_exec_allow pattern; fail-closed")
             try:
-                written = session_written_paths(ledger_path, session)
+                written = session_written_paths(ledger_path, session, root, _T0 + TIME_BUDGET_S)
+            except LedgerIndexBusy as exc:
+                deny(ledger_path, event, "E0", f"{exc}; denied, fail-closed")
             except (OSError, ValueError) as exc:
                 deny(ledger_path, event, "E0", f"ledger unreadable for E5 ({exc.__class__.__name__}); fail-closed")
             try:
@@ -1265,7 +2128,8 @@ def enforce(inp, manifest, root, ledger_path, store_source):
                 else:  # PowerShell: no parser, so every token counts (over-blocks reads; safe side)
                     toks = ps_tokens(shell_command(tool, ti))
                     # $PWD/x.sh, -FilePath:x.sh: also try the text after the last ':' or '$var/'.
-                    toks += [re.sub(r"^.*(?::|\$[^/]*/)", "", _norm(t)) for t in toks]
+                    toks += [re.sub(r"^.*(?::|\$[^/]*/)", "", _norm(t)) for t in toks
+                             if not re.match(r"(?i)^(?!file:)[a-z][a-z0-9+.-]*://", t)]  # not a URL: //host/x would read as UNC
             except ValueError:
                 deny(ledger_path, event, "E0", "command could not be tokenised for E5; fail-closed")
             for tok in dict.fromkeys(toks):  # de-duplicated: path_key resolves the file system
@@ -1292,6 +2156,12 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         if n > budget:
             deny(ledger_path, event, "E4", f"session tool-call budget {budget} exceeded (call #{n})")
 
+    # The old ledger_append read the whole ledger before every append, so a ledger that was not valid UTF-8 denied
+    # every call that would have been allowed. ledger_view keeps that, reading only what was appended since.
+    try:
+        ledger_view(ledger_path, root, _T0 + TIME_BUDGET_S)
+    except LedgerIndexBusy as exc:
+        deny(ledger_path, event, "E0", f"{exc}; denied, fail-closed")
     if e3_pending and e3_pending[0] == "ask":
         emit_ask(ledger_path, event, "E3-policy", e3_pending[1])
     if e3_pending:  # allow_with_ledger

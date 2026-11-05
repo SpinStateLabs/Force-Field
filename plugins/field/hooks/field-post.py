@@ -16,10 +16,18 @@ matrix), so every record says human_approval "not_evidenced" and approver null. 
 ran under a permission_mode other than "default" is marked as NOT a human approval (mode_is_default false):
 `auto`, `acceptEdits`, `dontAsk`, `bypassPermissions` or an unknown mode can run an ask without a person.
 
-Finding the ask: a scan of the ledger, newest record first, for the tool_use_id. The ledger stays the only
-store (append-only; no side file to keep in step). Cost: one read of the ledger per PostToolUse, the same
-order as the gate's own append, which already reads the whole file; the scan skips lines that do not contain
-the id and stops at the first match. A non-ask call is found absent without taking the lock.
+Finding the ask: the newest ledger record for the tool_use_id. The ledger stays the only store of record. The
+gate keeps a sidecar index of its asks in the state directory (see field-gate.py, ledger_view); this hook reads
+it without the lock, scans only the ledger bytes after the index's offset, and uses the index for the rest. It
+trusts the sidecar exactly when the gate does: it must match the ledger (identity, length, bytes before its offset)
+and its claims must re-derive from the ledger (the open segment, the newest 512 lines, every time, plus the gate's
+random sample of completed segments). Otherwise it scans the whole ledger newest first, as before. It never
+writes the sidecar (only the gate does, under its lock). A hit in the index, ask or executed record, is confirmed
+by reading the ledger line it names. Cost: O(records appended since the gate last saved the index, plus the
+sampled segments) instead of one read of the whole ledger per PostToolUse. What a forged sidecar can still do:
+hide an ask that sits in a completed segment the check did not re-derive on this call (no record is written; the
+same window the gate's E5 has, see the README); it cannot make the hook write a record for a call that has no ask.
+A non-ask call is found absent without taking the lock.
 
 Fields read from the hook input: hook_event_name, session_id, tool_use_id, permission_mode, cwd. Nothing else
 (tool_input and tool_response are not read, so no tool output reaches the ledger).
@@ -45,8 +53,13 @@ def _gate():
     return mod
 
 
-def find(ledger_path, session, tool_use_id):
-    """'duplicate', the ask record, or None. Newest first; the ask precedes any executed record."""
+def find(ledger_path, session, tool_use_id, gate=None, root=None):
+    """'duplicate', the ask record, or None. Newest first; the ask precedes any executed record.
+    With the gate module: the gate's incremental index answers for the verified part of the ledger and only the
+    bytes appended since are scanned (gate.ledger_find_ask; same answer as the full scan below, which it falls
+    back to when the sidecar is missing or does not match the ledger)."""
+    if gate is not None:
+        return gate.ledger_find_ask(ledger_path, root, session, tool_use_id)
     needle = json.dumps(tool_use_id)[1:-1]
     for line in reversed(ledger_path.read_text(encoding="utf-8").splitlines()):
         if needle not in line:
@@ -99,10 +112,10 @@ def main():
     if not isinstance(manifest, dict) or manifest.get("_unparsed"):
         return  # not governed, or unreadable: evidence only, so nothing to enforce and nothing to record
     ledger_path, source = gate.resolve_store(manifest, root)
-    if not ledger_path.exists() or not isinstance(find(ledger_path, session, tool_use_id), dict):
+    if not ledger_path.exists() or not isinstance(find(ledger_path, session, tool_use_id, gate, root), dict):
         return  # most calls end here, without the lock (the ask is in the ledger before the tool runs)
     _lock = gate.gate_lock(root)  # noqa: F841  (held until exit)
-    ask = find(ledger_path, session, tool_use_id)  # again under the lock: parallel posts append once
+    ask = find(ledger_path, session, tool_use_id, gate, root)  # again under the lock: parallel posts append once
     if isinstance(ask, dict):
         gate.ledger_append(ledger_path, record(ask, session, tool_use_id, mode, source))
 

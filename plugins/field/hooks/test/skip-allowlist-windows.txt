@@ -1,0 +1,11 @@
+# SKIP lines the gate suites may print on Windows (run_all.sh, ADR-0080). One per line: "<suite>: <exact SKIP line>".
+# Sorted comparison, exact match. A SKIP not listed here fails CI; a listed SKIP that stops appearing fails CI too.
+#
+# Why each is allowed:
+#   run_e5.sh   Windows has no POSIX file modes: `stat -c %a` on the ledger cannot show 0600, and chmod is not enforced
+#               by the file system. The ledger is still checked for content and hash chain by the other cases.
+#
+# Not listed on purpose (they print SKIP only when the runner cannot make the thing the case needs, and that must be
+# seen and decided, not absorbed): "Windows junction cases", "Windows symlink cases" in run_links.sh (the OS refused to
+# create the link), and "8.3 short name ..." in run_links.sh (the volume has 8.3 name generation off).
+run_e5.sh: SKIP  ledger mode check (Windows)
