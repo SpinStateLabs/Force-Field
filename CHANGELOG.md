@@ -18,7 +18,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
-## [Unreleased] force-field 2.1.1 (not yet versioned or released)
+## force-field — 2.1.1 / marketplace — 2.1.1 — 2026-11-06
 
 Two findings from the external tester's re-run of 2.0.0 on macOS (LinkedIn, 2026-11-05).
 
