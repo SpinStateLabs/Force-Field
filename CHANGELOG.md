@@ -18,7 +18,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
-## force-field — 2.1.0 / marketplace — 2.1.0 — 2026-11-05
+## force-field — 2.1.0 / marketplace — 2.1.0 — 2026-11-06
 
 ### Added (templates; ROADMAP "Enforcement Gate v1.2" item 5)
 
