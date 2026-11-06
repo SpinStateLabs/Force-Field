@@ -8,12 +8,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## [Unreleased]
 
-### Added (templates; ROADMAP "Enforcement Gate v1.2" item 5; not yet released, no version bump)
+### Planned
+
+- FORCE v1.1 refinements based on real-world usage feedback.
+- FIELD refinements: manifest examples per pillar, reference architectures; possible reference implementation of runtime enforcement in n8n.
+- Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
+
+---
+
+---
+
+## force-field — 2.1.0 / marketplace — 2.1.0 — 2026-11-05
+
+### Added (templates; ROADMAP "Enforcement Gate v1.2" item 5)
 
 - Three FIELD templates for the Force-Field Platform build roles: `ssl-fp-builder`, `ssl-fp-reviewer`, `ssl-fp-coordinator` (`skills/field/templates/`). Federated (peers and contracts declared), E3 deny patterns on, E5 on, `.github/workflows/` protected, hash-chain ledger, FORCE presets analysis / audit / analysis. None can merge; the builder pushes only its own branch; the reviewer cannot commit, push or approve.
 - Schema unchanged. They validate against `manifest-schema.json` and the CI template loop picks them up. `REPLACE-ME` values remain for the operator. Role definitions are assumptions from the names, flagged in each file's header; delegation `scope` text is not machine-enforced.
 
-### Added (FORCE + FIELD runtime composition; ROADMAP "Enforcement Gate v1.2" item 3; not yet released, no version bump)
+### Added (FORCE + FIELD runtime composition; ROADMAP "Enforcement Gate v1.2" item 3)
 
 - **`SessionStart` hook `hooks/field-compose.sh` / `field-compose.py`.** When the project's `field-manifest.yaml` declares `runtime_protocol: {name: FORCE, preset: analysis|brainstorm|draft|audit}`, the hook injects that preset's FORCE blocks (`skills/force/protocol.md`; presets as in `protocol-defaults.json`) into the session as `additionalContext`. Previously the declaration was not wired to anything.
 - **Fails open and only adds context.** It never denies, never writes state, always exits 0; no manifest, no `runtime_protocol`, a name other than FORCE, an unknown preset, no Python or a parse error injects nothing. The Enforcement Gate is unchanged and stays fail-closed. The manifest preset wins over the user-level `force.json`.
@@ -21,7 +33,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 - Tests: `hooks/test/run_compose.sh` (13 cases), added to `run_all.sh` and CI; `run_post_hook.sh` registration check now expects the `SessionStart` event.
 - Not covered: FORCE is advisory context, not enforcement. The model can drift from it; nothing audits compliance.
 
-### Fixed (gate: per-call ledger work is O(new events), not O(all events); behaviour-preserving, not yet released, no version bump)
+### Fixed (gate: per-call ledger work is O(new events), not O(all events); behaviour-preserving)
 
 The gate read the **whole** ledger on every call, so a call cost about 14 us per ledger line and grew without limit; a hook that runs past its 10 s timeout is **allowed** by Claude Code (fails open). Measured here (CPU seconds per gate call, `Bash ls`, E5 on, synthetic 390-byte records, CPU time because the dev machine was saturated by other work and wall time was not stable): 100 000 lines 1.66 (Windows, Python 3.12) / 2.21 (WSL), 300 000 lines 4.44 / 7.26 (WSL p95 10.1, over the timeout), 1 000 000 lines 14.8 / 30.1. A review had measured 6.6 to 7.9 s wall at 300 000 lines.
 
@@ -52,7 +64,7 @@ Known limits (follow-up, not fixed in this change):
 
 - The sidecar keeps every ask it has indexed (`asks`) and every (session, path) write (`posts`), and every call loads, checksums and validates the whole sidecar, so the per-call cost is O(new events + sidecar size), not O(new events). Review measurement (Windows, Python 3.14.2, machine saturated): a 300 000 line ledger in which 15 % of records are E3 asks with unique `tool_use_id`s has a 2.53 MB sidecar (81.5 KB for the ordinary ledger), warm gate CPU per call 0.44 / 0.48 s min / median against 0.25 / 0.30 s, post hook 0.28 / 0.34 s against 0.17 / 0.19 s. Real ask rates are far lower. Planned fix: drop an ask once its executed record is indexed, and cap both maps with a fall-back to the full scan beyond the cap.
 
-### Fixed (gate, ADR-0080; not yet released, no version bump)
+### Fixed (gate, ADR-0080)
 
 - **field-gate.py resolves symlinks and junctions on Windows.** `_abs_norm` and `_root_norm` called `realpath` only off Windows, so a link already in the project that pointed at `.claude/state` or the manifest hid the target from E2, and a file written through a link was a different file to E5. On Windows (`os.name == "nt"`) the path and the root are now resolved with `_win_real`: `..` collapsed first (as Win32 does), then `os.path.realpath(strict=True)` on the longest existing prefix with the rest appended. Tested here on Python 3.14.2 and in CI on 3.12.10: it resolves `mklink /J` junctions, `mklink /D` symlinks and 8.3 short names.
 - **Fail closed.** After cleaning, a Windows path that is not on a drive letter (UNC and admin-share `\\localhost\C$`, `\\?\Volume{GUID}`, `\\?\GLOBALROOT`, `\\.\` device paths, `\\?\UNC\...`, drive-relative `C:x`) raises `UnresolvablePath`, which `main()` turns into an E0 deny, unless it lies under the identically cleaned project root (a project on a UNC share keeps working). Local admin-share access is denied by design. A symlink or junction loop, access denied, or any other error from the strict resolution raises OSError and also denies E0. (An earlier revision of this entry said any `realpath` error denies; that was wrong, Python's lenient `realpath` swallows loop errors, which is why the strict call is used.) POSIX path resolution (`_abs_norm`, `_root_norm`) is unchanged: no loop detection there, and a test compares that branch with the pre-ADR-0080 code on 238 inputs. The one deliberate POSIX change is the bare-word rule in the CI-fix bullet below, which is outside that comparison.
@@ -64,7 +76,7 @@ Known limits (follow-up, not fixed in this change):
 - Workflow: `permissions: contents: read`, actions pinned to commit SHAs.
 - README: a known-bypass register (hard links, shell expansion, programs that open the path themselves, untested `net use` drives).
 
-### Fixed (gate, PR 15: the third-review gaps of PR 14; not yet released, no version bump)
+### Fixed (gate, PR 15: the third-review gaps of PR 14)
 
 Deny-direction changes (each can turn a command that ran into an E2 deny; the first four close real bypasses):
 
@@ -89,7 +101,7 @@ New suite `hooks/test/run_shell_forms.sh` (in `run_all.sh` and the Ubuntu job), 
 - **PowerShell colon-bound parameters.** Fixed in PR 15. `Set-Content -Path:.claude\state\x` binds the value to the flag with a colon; the state-directory pattern is anchored at the start of a token, so it does not match after the `-Path:` prefix.
 - **False deny (fixed in PR 15 unless that drive letter exists): single-letter prefix with two or more colons.** `echo a:b:c` (also `Write-Output a:b:c`) reads as a drive-relative path `a:` and gives E0 UnresolvablePath although it is not a path. Quote-free workaround: put the text in a file or quote it so it is not a bare word.
 
-### Changed (gate, fail-closed on hook failure; not yet released, no version bump)
+### Changed (gate, fail-closed on hook failure)
 
 ADR-0081 (`docs/adr/ADR-0081-gate-hook-fail-closed.md`). `plugins/field/hooks/hooks.json` sets `"onFailure": "block"` on the PreToolUse gate hook; `timeout` stays 10. Claude Code lets a tool call through when a PreToolUse command hook times out, crashes, cannot start or prints invalid JSON, unless the hook sets this key (added in Claude Code 2.1.295, 2026-10-08; with it a failure does what exit code 2 does, which on PreToolUse blocks the call). Until now a gate that stalled past 10 s let the call through, except on Windows without Git Bash, where Claude Code 2.1.299 and later already blocks a failed PreToolUse hook that sets no `shell`.
 
@@ -99,13 +111,6 @@ ADR-0081 (`docs/adr/ADR-0081-gate-hook-fail-closed.md`). `plugins/field/hooks/ho
 - **PostToolUse evidence hook unchanged** (default `"continue"`). With "block" a PostToolUse failure only shows stderr to the model; the tool already ran, so nothing can be blocked, and the hook is evidence-only by design. A post hook that fails writes no `E3-policy-executed` record although the call ran, so a logged ask without that record is "not evidenced"; this supersedes the field 1.5.0 entry's reading of such an ask as "did not run".
 - **Consequence.** A gate hook that stalls or cannot start now stops tool use until it recovers, in every project where the plugin is enabled, including projects without a manifest (a hook that never answers cannot say there is no manifest). This is the intended fail-closed behaviour (owner decision 2026-10-25: the gate must really enforce).
 - **Tests.** New suite `hooks/test/run_hooks_config.sh` (static; in `run_all.sh` and the Ubuntu job): every PreToolUse hook has `onFailure: "block"`, an explicit integer timeout and no `async`/`asyncRewake`, and the evidence hook does not set "block"; 13 mutants of `hooks.json` are each rejected, and removing the key from the shipped file turns the suite red (checked). `hooks/test/run_timeout_live.sh` is the live proof; it is not in `run_all.sh` or CI (it needs a logged-in `claude` and makes three `claude -p` invocations, one per case, of up to 2 turns each; case A may end with `error_max_turns` when the model retries after the block) and prints SKIP without one.
-
-### Planned
-
-- FORCE v1.1 refinements based on real-world usage feedback.
-- FIELD refinements: manifest examples per pillar, reference architectures; possible reference implementation of runtime enforcement in n8n.
-- Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
-- FORCE + FIELD runtime composition — automatic FORCE application inside FIELD-declared agents.
 
 ---
 

@@ -1,4 +1,4 @@
-# force-field — Claude Code Plugin (2.0.0)
+# force-field — Claude Code Plugin (2.1.0)
 
 The **Force-Field Protocol** from Spin State Labs, in one package with three skills.
 
