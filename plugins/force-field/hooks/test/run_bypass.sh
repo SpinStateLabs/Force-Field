@@ -12,6 +12,8 @@ HERE="$PWD"; G="$HERE/../field-gate.py"; V="$HERE/../verify-ledger.py"
 PY=""; for c in python3 python; do command -v "$c" >/dev/null 2>&1 && "$c" -c 'import yaml' >/dev/null 2>&1 && { PY=$c; break; }; done
 [ -n "$PY" ] || { echo "FAIL  no Python 3 with PyYAML on this machine"; exit 1; }
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
+# the out-of-project governed registry (2.1.1) goes in the scratch dir, never in the real ~/.claude
+export FIELD_GOVERNED_DIR="$T/_governed-registry"
 fail=0
 expect() { if [ "$2" = "$3" ]; then echo "PASS  $1"; else echo "FAIL  $1 (expected $2, got $3)"; fail=1; fi; }
 pj() { "$PY" -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "$1"; }
@@ -213,6 +215,23 @@ for c in 'rm x' 'rm -f x' 'rm -r build' 'rm -v x' 'rm -rv build' 'rm --force x' 
          'echo "rm -fr is dangerous"' 'ls -fr' 'cp -rf a b' 'echo a+b'; do
   bash_allow "E3 allow: $c" "$P" "$c"
 done
+
+# ---- finding 5 (external tester, 2.0.0): one python -c that removes .claude and globs away the manifest ----
+# The in-project artefacts all live under .claude/state/, so the wipe left nothing saying "governed" and the gate went
+# silent. The gate now also keeps a marker outside the project; with the wipe done, the next call is still E0.
+P=$(proj reg1)
+allow "registry: first governed call allowed" "$P" Bash '{"command":"ls"}'
+ls "$FIELD_GOVERNED_DIR"/*.json >/dev/null 2>&1 && expect "registry: marker written outside the project" yes yes || expect "registry: marker written outside the project" yes no
+rm -rf "$P/.claude" "$P"/field-*.yaml   # what the one-liner achieves
+deny "registry: .claude and manifest wiped -> E0" "$P" Bash '{"command":"ls"}' E0
+deny "registry: wiped project, Write -> E0"       "$P" Write '{"file_path":"a.txt","content":"x"}' E0
+REGW="$FIELD_GOVERNED_DIR"; command -v cygpath >/dev/null 2>&1 && REGW=$(cygpath -m "$FIELD_GOVERNED_DIR")
+P=$(proj reg2); allow "registry: reg2 governed" "$P" Bash '{"command":"ls"}'
+deny "registry: python -c naming the registry -> E2" "$P" Bash "$(pj "python3 -c \"import shutil;shutil.rmtree('.claude/state/field-governed')\"")" E2
+deny "registry: rm -r of the registry (absolute) -> E2" "$P" Bash "$(pj "rm -r $REGW")" E2
+deny "registry: Write into the registry -> E2" "$P" Write "$("$PY" -c 'import json,sys;print(json.dumps({"file_path":sys.argv[1]+"/x.json","content":"{}"}))' "$REGW")" E2
+P="$T/reg-ungoverned"; rm -rf "$P"; mkdir -p "$P"
+allow "registry: a never-governed project stays ungoverned" "$P" Bash '{"command":"ls"}'
 
 [ $fail -eq 0 ] && echo "ALL BYPASS TESTS PASSED" || echo "BYPASS TESTS FAILED"
 exit $fail

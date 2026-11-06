@@ -108,6 +108,11 @@ LOCK_FILE = STATE_DIR + "/field-gate.lock"
 # Files under .claude/state/ that only a FIELD-governed project has (1.5.2). Any of them, or FIELD_MANIFEST
 # in the environment, means governance is expected: a missing manifest is then E0, not "nothing to do".
 STATE_ARTEFACTS = ("field-ledger.jsonl", "field-session-calls.json", "field-gate.lock", "KILL")
+# Out-of-project record of governed projects (2.1.1). The in-project artefacts above live in .claude/state/, which
+# one `python -c` that removes .claude and globs away the manifest could delete together, leaving nothing that says
+# "governed". The gate therefore also writes a marker under ~/.claude/state/field-governed/ (FIELD_GOVERNED_DIR
+# overrides the directory) the first time it runs against a valid manifest; E2 protects that directory.
+GOVERNED_DIRNAME = "field-governed"
 FILE_TOOLS = ("Edit", "Write", "MultiEdit", "NotebookEdit")
 SHELL_TOOLS = ("Bash", "PowerShell")
 # Read-only tools the hook passes straight through (no manifest read, no ledger record).
@@ -1742,11 +1747,41 @@ def shell_pattern_hit(tool, cmd, globs, names, root, guard=()):
     return f"destructive command aimed at {hit}" if hit else None
 
 
+def governed_registry_dir():
+    """Directory holding the out-of-project governed markers, outside every project's .claude/state/."""
+    d = os.environ.get("FIELD_GOVERNED_DIR")
+    return pathlib.Path(os.path.expanduser(d)) if d else pathlib.Path.home() / ".claude" / "state" / GOVERNED_DIRNAME
+
+
+def _governed_marker(root):
+    key = hashlib.sha256(str(pathlib.Path(root).resolve()).casefold().encode()).hexdigest()[:16]
+    return governed_registry_dir() / (key + ".json")
+
+
+def register_governed(root):
+    """Record that `root` is governed, outside the project. Best effort: an unwritable registry leaves the
+    in-project artefacts as the only record (the 2.1.0 behaviour), it never blocks a call."""
+    try:
+        m = _governed_marker(root)
+        if not m.exists():
+            m.parent.mkdir(parents=True, exist_ok=True)
+            m.write_text(json.dumps({"root": str(pathlib.Path(root).resolve()),
+                                     "first_seen": datetime.datetime.now(datetime.timezone.utc).isoformat()}),
+                         encoding="utf-8")
+    except OSError:
+        pass
+
+
 def governed_by(root):
     """Why governance is expected without a manifest, else None: FIELD_MANIFEST is set, or .claude/state/
     holds a FIELD artefact. A project that never ran the gate has neither and stays ungoverned."""
     if os.environ.get("FIELD_MANIFEST"):
         return "FIELD_MANIFEST is set"
+    try:
+        if present(_governed_marker(root)):
+            return "this project is registered as governed outside the project"
+    except OSError:
+        pass
     for name in STATE_ARTEFACTS:
         if present(root / STATE_DIR / name):
             return f".claude/state/{name} exists"
@@ -1987,7 +2022,10 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         protected.append((re.escape(a) + "$", label))
         if a.startswith(rootn + "/"):
             protected.append((re.escape(a[len(rootn) + 1:]) + "$", label))
-    guard = []  # directories the sentinel and stamp live in: rm / mv of them is denied (shell_pattern_hit)
+    reg_abs, _rn = _abs_norm(governed_registry_dir(), root)
+    protected.append(("^" + re.escape(reg_abs) + r"(?:/|$)", "the governed registry"))
+    protected.append((r"(?:^|[\\/])" + re.escape(GOVERNED_DIRNAME) + r"(?:[\\/]|$)", "the governed registry"))
+    guard = [(reg_abs, "the governed registry")]  # directories the sentinel, stamp and registry live in: rm / mv of them is denied (shell_pattern_hit)
     for p, label in ((estate, "the estate kill sentinel"), (stamp, "the estate heartbeat stamp")):
         if p is not None:
             a, rootn = _abs_norm(p, root)
@@ -2019,6 +2057,7 @@ def enforce(inp, manifest, root, ledger_path, store_source):
         (".claude/settings.local.json", ".claude/settings.local.json"))]
     names += [(_abs_norm(p, root)[0], label) for p, label in
               ((estate, "the estate kill sentinel"), (stamp, "the estate heartbeat stamp")) if p is not None]
+    names.append((reg_abs, "the governed registry"))
 
     def hits(word):  # does one shell word name a governance path (cp/install destination test)
         return (any(rx.search(f) for f in _path_forms(word, root) for rx, _l in rules)
@@ -2045,7 +2084,7 @@ def enforce(inp, manifest, root, ledger_path, store_source):
             scrubbed = re.sub(r"\.claude/state/(?:%s)(?![\w.\-/])" % "|".join(exempt), "", text, flags=re.IGNORECASE)
             end = r"(?![\w\-]|\.[\w\-])"  # name.example and name.bak are other files; the name followed by . ' " ) or end is the file
             loose = [r"field-manifest\.ya?ml" + end, r"\.claude/settings[^\s'\"/]*\.json" + end, r"hooks\.json" + end,
-                     r"\.claude/state(?![\w\-])"]
+                     r"\.claude/state(?![\w\-])", re.escape(GOVERNED_DIRNAME) + end, re.escape(reg_abs)]
             for p in (manifest_path(root), ledger_path, counter) + tuple(x for x in (estate, stamp) if x is not None):
                 a, rootn = _abs_norm(p, root)
                 loose.append(re.escape(a[len(rootn) + 1:] if a.startswith(rootn + "/") else a) + end)
@@ -2193,6 +2232,8 @@ def main():
     kill = root / DEFAULT_KILL
     if present(kill):
         early_deny(inp, root, manifest, "E1", f"kill switch tripped ({path_key(kill, root)}); all tool calls halted")
+    if isinstance(manifest, dict) and "_unparsed" not in manifest:
+        register_governed(root)
     if manifest is None:
         why = governed_by(root)
         if why is None:

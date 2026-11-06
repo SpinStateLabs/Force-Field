@@ -18,6 +18,23 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ---
 
+## [Unreleased] force-field 2.1.1 (not yet versioned or released)
+
+Two findings from the external tester's re-run of 2.0.0 on macOS (LinkedIn, 2026-11-05).
+
+### Fixed
+
+- **Gate disarmed by wiping `.claude` and the manifest in one command (high).** `python -c` that removes `.claude/` and globs away `field-*.yaml` left no FIELD artefact in the project, so the gate saw an ungoverned project and exited 0. The gate now also writes a marker outside the project (`~/.claude/state/field-governed/<hash of project root>.json`; `FIELD_GOVERNED_DIR` overrides the directory) on the first call against a valid manifest. A missing manifest with a marker present is E0, like any other governed project. E2 protects the registry: writes, `rm`/`mv`, glob words, and interpreter or PowerShell text naming `field-governed` or its path are denied. Tests: `run_bypass.sh` finding 5.
+- **`run_e5.sh` failed 46 cases on macOS bash 3.2 (low).** Inline JSON built in a nested `"$( ... "{\"k\":\"v\"}" )"` is brace-expanded by bash 3.2. Lines 34, 46 and 53 now build the JSON with python `json.dumps` (`pj`, new `pjw`). The tester reported 333/333 with the line 53 change. Not run on bash 3.2 here.
+
+### Known limits (unchanged by this fix)
+
+- Decommissioning a project now also means deleting its marker in the registry, outside the session. Until then a deleted manifest is E0.
+- The registry is protected by the same text-reading accident guard as the rest of E2: a command that builds the path at runtime (`Path.home() / ...`) is not seen. Deleting the whole `~/.claude` tree or `~/.claude/state` (parents of the registry) is not guarded. The marker is only as safe as the user account the agent runs as; `FIELD_ANCHOR_DIR` pointed at a directory the agent's tools cannot reach remains the stronger option.
+- A project's first governed call registers it; a project that was wiped before it ever ran the gate under 2.1.1 is not recognised.
+
+---
+
 ## force-field — 2.1.0 / marketplace — 2.1.0 — 2026-11-05
 
 ### Added (templates; ROADMAP "Enforcement Gate v1.2" item 5)

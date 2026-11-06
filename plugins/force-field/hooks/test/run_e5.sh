@@ -14,6 +14,8 @@ expect() { # label expected actual
   if [ "$2" = "$3" ]; then echo "PASS  $1"; else echo "FAIL  $1 (expected $2, got $3)"; fail=1; fi
 }
 pj() { python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "$1"; }
+# bash 3.2 (macOS) brace-expands inline JSON such as "{\"k\":\"v\"}" nested in $( ); build it in python instead (external report, 2.0.0)
+pjw() { python3 -c 'import json,sys;print(json.dumps({"file_path":sys.argv[1],"content":"x"}))' "$1"; }
 is_windows() { case "$(uname -s)" in MINGW*|MSYS*|CYGWIN*) return 0;; *) return 1;; esac; }
 # dirlink <link> <target> / rmdirlink <link>: a directory link. POSIX: ln -s. Windows: a junction (mklink /J, needs no
 # privilege). rmdir removes a junction without following it (rm -rf on one can delete the target's contents).
@@ -31,7 +33,7 @@ run_suite() {
 cd "$HERE"; run_suite
 for c in 'bash ./x.sh' 'sh x.sh' 'source x.sh' '. ./x.sh' './x.sh' 'chmod +x x.sh && ./x.sh' \
          'bash -x x.sh' 'sudo -E bash x.sh' 'FOO=1 ./x.sh' 'python3 x.py' 'node x.js' "$(abspath "$PWD")/x.sh"; do
-  expect "E5 deny: $c" 2 "$(call t1 Bash "{\"command\":\"$c\"}")"
+  expect "E5 deny: $c" 2 "$(call t1 Bash "$(pj "$c")")"
 done
 # bypasses found in the pre-push security review (must all be denied)
 for c in 'sudo -u root ./x.sh' 'sudo -E -H ./x.sh' 'env -u FOO ./x.sh' 'nice -n 10 ./x.sh' 'exec -a foo ./x.sh' \
@@ -43,14 +45,14 @@ for c in 'sudo -u root ./x.sh' 'sudo -E -H ./x.sh' 'env -u FOO ./x.sh' 'nice -n 
 done
 expect "E5 deny (review): quoted name" 2 "$(call t1 Bash '{"command":"bash \"x.sh\" \"a;b\""}')"
 for c in 'cat x.sh' 'git add x.sh' 'ls x.sh' 'cat x.sh | grep a' 'bash ./approved/ok.sh' 'bash other.sh' 'python3 -m x' 'python3 -c pass'; do
-  expect "allow: $c" 0 "$(call t1 Bash "{\"command\":\"$c\"}")"
+  expect "allow: $c" 0 "$(call t1 Bash "$(pj "$c")")"
 done
 expect "other session may run t1's file" 0 "$(call t2 Bash '{"command":"bash ./x.sh"}')"
 # command word is a path, not a tool (second public review): a session-written file named after an
 # allowlisted read-only tool must not borrow that tool's exemption; the real tool stays allowed
 expect "write x3.sh allowed (t3)"            0 "$(call t3 Write '{"file_path":"x3.sh","content":"echo"}')"
 for n in cat ls head tail less more wc grep rg diff stat file git sha256sum md5sum chmod echo printf test '['; do
-  expect "write $n allowed (t3)"              0 "$(call t3 Write "{\"file_path\":\"$n\",\"content\":\"x\"}")"
+  expect "write $n allowed (t3)"              0 "$(call t3 Write "$(pjw "$n")")"
   expect "E5 deny: ./$n (named like a read-only tool)" 2 "$(call t3 Bash "$(python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "./$n")")"
 done
 expect "write tools/cat allowed (t3)"        0 "$(call t3 Write '{"file_path":"tools/cat","content":"x"}')"
