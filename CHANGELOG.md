@@ -35,7 +35,7 @@ Two findings from the external tester's re-run of 2.0.0 on macOS (LinkedIn, 2026
 
 ---
 
-## force-field — 2.1.0 / marketplace — 2.1.0 — 2026-11-05
+## force-field — 2.1.0 / marketplace — 2.1.0 — 2026-11-06
 
 ### Added (templates; ROADMAP "Enforcement Gate v1.2" item 5)
 
