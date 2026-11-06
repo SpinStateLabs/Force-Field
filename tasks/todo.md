@@ -27,4 +27,5 @@ Builder-1 = 1, 3, 5. Builder-2 = 2, 4, 6.
 - [x] Tests: decisions, differential vs field-gate.py, known-gap assertions, ledger parity, workflow sync + stubbed Code-node run
 - [x] Mutation checks: disabling E1 or E3 makes tests fail
 - [x] README with limits; CHANGELOG [Unreleased]; ROADMAP; CI step (Linux job)
-- [ ] Live n8n import/execute: see PR description for what was run
+- [x] Live n8n 2.46.6: import OK; Field Gate Code node executed via `n8n execute` (4 decisions correct; crypto builtin must be allowed)
+- [ ] Not done: webhook activation + HTTP calls (starting a local n8n server was denied by the session classifier)

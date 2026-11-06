@@ -31,7 +31,7 @@ for the answer. Reference quality: read it, adapt it, do not treat it as the Enf
 - **Regex dialect.** Patterns are Python regexes in the manifest. A leading `(?i)` is translated; any other inline flag
   (`(?s)`, `(?x)`, `(?i:...)`) is an E0 deny, never silently dropped. Other Python/JS differences (named groups,
   possessive quantifiers) are not translated.
-- **Not verified in a live n8n** unless the PR says otherwise: see "Verification" below.
+- **Only partly verified in a live n8n**: see "Verification" below.
 
 ## Use
 
@@ -65,4 +65,13 @@ To change the manifest, regenerate the workflow (the Code node embeds it as a `M
 
 ## Verification
 
-See the PR description for what was and was not run against a real n8n.
+Run once against n8n 2.46.6 (Node 24), 2026-11-06:
+
+- **Done:** the generated workflow imported (`n8n import:workflow`, with two Header Auth credentials). The `Field Gate` Code
+  node was executed inside n8n (`n8n execute`, on a manual-trigger test copy): allow, deny E3, deny E3, allow for `ls`,
+  `git push --force`, `gh pr merge`, `Read`, as expected. Without `NODE_FUNCTION_ALLOW_BUILTIN=crypto` the node fails with
+  `DisallowedModuleError: Module 'crypto' is disallowed`, so that setting is required (and a failing node is an error, not an `allow`).
+- **Not done:** activating the workflow and calling the webhooks. The Webhook nodes, Header Auth, the Respond to Webhook nodes
+  (`responseBody` is an expression), the Operate path in n8n, static-data persistence across executions and concurrent
+  executions were not exercised in n8n; the stubbed run in `test/` covers the Operate and static-data logic only. The native
+  expression engine would not load in the test environment, so the legacy engine was used.
