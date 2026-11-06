@@ -20,7 +20,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## force-field — 2.1.1 / marketplace — 2.1.1 — 2026-11-06
 
-Two findings from [Syed Khizer Ali](https://www.linkedin.com/in/ACoAADuQ2nsBfhWnEQ5Gt5RjzBh-Id_dmkogLfA)'s re-run of 2.0.0 on macOS (reported on LinkedIn, 2026-11-05). Credit: [Syed Khizer Ali](https://www.linkedin.com/in/ACoAADuQ2nsBfhWnEQ5Gt5RjzBh-Id_dmkogLfA), named with consent.
+Two findings from [Syed Khizer Ali](https://www.linkedin.com/in/syed-khizer-ali/)'s re-run of 2.0.0 on macOS (reported on LinkedIn, 2026-11-05). Credit: [Syed Khizer Ali](https://www.linkedin.com/in/syed-khizer-ali/), named with consent.
 
 ### Fixed
 
@@ -165,7 +165,7 @@ Four findings from an external tester. Findings 1 to 3 were reproduced against 1
 - A tripwire on command text, not a sandbox, as before. Not caught: a path built at run time (`os.path.join('.claude', 'st' + 'ate')`, `chr()` arithmetic, a name read from the environment or a file), a directory held in a variable (`cd "$D" && rm -r state`), a quoted name given to a command that is neither an interpreter nor in E2's mutating list (`git rm "field-manifest.yaml"`, `rsync --delete`), and programs that delete without naming the target (`git clean`, `find -delete`).
 - A deleted ledger that the next gated call restarts is a short, valid chain and verifies INTACT unless the opt-in anchor is set (below). New, opt-in: with `FIELD_ANCHOR_DIR` set in the hook's environment, the gate records `{count, hash}` of the ledger's last record there, outside `.claude/state/`; a deleted, emptied or truncated ledger (or a changed anchored record) then denies every gated call with E0 and `verify-ledger.py` prints `LEDGER ROLLED BACK` (exit 1). A human removes the anchor file to start over. Point the directory somewhere the agent's tools cannot write (they can still write it if it is inside their reach). Off by default, so existing projects behave as before.
 - E3 canonicalises `rm` and `git push` only; `git push --delete`, `-d` and `:ref` now read as a force push. (Hardening in this release: E2 also reads quoted names given to `git rm|mv|checkout|restore|reset|stash|clean`, and denies `git clean` and `git stash -u/-a`, which remove untracked files without naming them.) `git clean -fdx` (E2 now denies it), `dd`, `truncate` are not in the default patterns and are not canonicalised.
-- Credit: [Syed Khizer Ali](https://www.linkedin.com/in/ACoAADuQ2nsBfhWnEQ5Gt5RjzBh-Id_dmkogLfA), who reported these findings and gave consent to be named (2026-11-05).
+- Credit: [Syed Khizer Ali](https://www.linkedin.com/in/syed-khizer-ali/), who reported these findings and gave consent to be named (2026-11-05).
 
 ---
 
