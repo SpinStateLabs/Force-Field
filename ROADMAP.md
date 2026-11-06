@@ -162,7 +162,7 @@ The public commitment in v1.0 was "enforcement in v1.1". v1.1 delivers it inside
 - **Policy-driven verdicts** — shipped (schema 1.3.0, opt-in `deny_patterns_verdict: policy`): `irreversible_action_policy` → deny / ask / allow-with-ledger.
 - ~~**A `kill_switch.local_sentinel`**~~ — shipped in field 1.4.0 (2026-10-21, ADR-0072). (The locked call counter shipped in 1.2.0.)
 - **FORCE + FIELD runtime composition** — built (unreleased): a `SessionStart` hook injects the FORCE preset the manifest declares in `runtime_protocol`; advisory, fails open.
-- **Ledger reference implementations** — in review (PR #20): `ledger/ledger_ship.py` ships the ledger to dir, S3 or Postgres sinks with HMAC sealing. Tested against moto and local Postgres 16, not live S3.
+- **Ledger reference implementations** — shipped in force-field 2.1.0 (PRs #20, #23): `ledger/ledger_ship.py` ships the ledger to dir, S3 or Postgres sinks with HMAC sealing. Tested against moto and local Postgres 16, not live S3; the dir-sink tests run in CI.
 - **Additional FIELD templates** — for agents Spin State clients ask about.
 - **Reference runtime enforcement in n8n** (possible) — a sample workflow that reads a FIELD manifest and applies its constraints outside Claude Code.
 
