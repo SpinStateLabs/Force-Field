@@ -70,7 +70,7 @@ class Common:
         r = self.ship(); self.assertEqual(r.returncode, 1); self.assertIn("REFUSED", r.stdout)
 
     def test_refuses_rechained_local_ledger(self):
-        """The case the local chain cannot catch: a ledger re-chained from scratch with a different history."""
+        # The case the local chain cannot catch: a ledger re-chained from scratch with a different history.
         self.ship()
         self.ledger.unlink()
         for i in range(5):
