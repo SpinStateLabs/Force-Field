@@ -12,7 +12,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 - FORCE v1.1 refinements based on real-world usage feedback.
 - FIELD refinements: manifest examples per pillar, reference architectures; possible reference implementation of runtime enforcement in n8n.
-- Sample ledger stores (s3, Postgres) with cryptographic sealing wired.
 
 ---
 
@@ -26,6 +25,10 @@ Two findings from [Syed Khizer Ali](https://www.linkedin.com/in/syed-khizer-ali/
 
 - **Gate disarmed by wiping `.claude` and the manifest in one command (high).** `python -c` that removes `.claude/` and globs away `field-*.yaml` left no FIELD artefact in the project, so the gate saw an ungoverned project and exited 0. The gate now also writes a marker outside the project (`~/.claude/state/field-governed/<hash of project root>.json`; `FIELD_GOVERNED_DIR` overrides the directory) on the first call against a valid manifest. A missing manifest with a marker present is E0, like any other governed project. E2 protects the registry: writes, `rm`/`mv`, glob words, and interpreter or PowerShell text naming `field-governed` or its path are denied. Tests: `run_bypass.sh` finding 5.
 - **`run_e5.sh` failed 46 cases on macOS bash 3.2 (low).** Inline JSON built in a nested `"$( ... "{\"k\":\"v\"}" )"` is brace-expanded by bash 3.2. Lines 34, 46 and 53 now build the JSON with python `json.dumps` (`pj`, new `pjw`). The tester reported 333/333 with the line 53 change. Not run on bash 3.2 here.
+
+### Changed (CI)
+
+- **Ledger shipper tests run in CI (PR 23).** `hooks/test/run_ledger_ship.sh` runs `test_ledger_ship.py`, is listed in `run_all.sh` (the Windows job) and has its own step in the Linux job. CI runs the dir-sink tests only; the S3 and Postgres cases are reported as `N/A` where `boto3`, `moto`, `psycopg2` or a database are missing, so the SKIP allowlists are unchanged.
 
 ### Known limits (unchanged by this fix)
 
@@ -49,6 +52,16 @@ Two findings from [Syed Khizer Ali](https://www.linkedin.com/in/syed-khizer-ali/
 - Manifest lookup matches the gate (`$FIELD_MANIFEST`, `$CLAUDE_PROJECT_DIR`, hook cwd). PyYAML is used if present; without it a small fallback reads the `runtime_protocol` block.
 - Tests: `hooks/test/run_compose.sh` (13 cases), added to `run_all.sh` and CI; `run_post_hook.sh` registration check now expects the `SessionStart` event.
 - Not covered: FORCE is advisory context, not enforcement. The model can drift from it; nothing audits compliance.
+
+### Added (ledger reference implementation; ROADMAP "Enforcement Gate v1.2" item 4)
+
+Shipped in the 2.1.0 tree (PR 20) but left out of this entry at release; recorded here afterwards.
+
+- **`ledger/ledger_ship.py`, `ledger/schema.sql`, `ledger/README.md`** (under `plugins/force-field/`). A reference shipper and verifier for the gate's sha-256 hash-chained ledger. `ship` copies new records to an append-only remote sink and writes one `HMAC-SHA256(key, "<seq>:<head hash>")` seal per run; `verify` re-checks the remote chain, every seal, and reports records after the last seal as unsealed. Sinks: `dir:` (standard library), `s3://` (needs `boto3`; records and seals are written with `IfNoneMatch: *`, so an existing key is never overwritten), `postgres://` (needs `psycopg2`; `schema.sql` adds triggers that reject `UPDATE` and `DELETE`). The key comes from `FIELD_SEAL_KEY` (32 characters or more).
+- **Why a seal.** A ledger re-chained after an edit passes `hooks/verify-ledger.py` (there is no key in the local chain); it cannot be re-sealed without the key. `ship` also refuses a local ledger that does not verify, and a remote that is not a prefix of the local ledger (rollback or re-chain).
+- **No change** to the gate, `manifest-schema.json`, the manifest or the templates. The gate does not read the remote store; `ledger.store` stays descriptive.
+- Tests: `hooks/test/test_ledger_ship.py`, 17 cases (dir sink; S3 against `moto`; Postgres 16 against a real local server). Not tested: live AWS S3 (conditional writes, Object Lock), Windows with S3 or Postgres, other Postgres versions.
+- Limits: tamper-evident, not tamper-proof (whoever holds the key and write access can forge a seal); batch shipping, so records between runs exist only locally; the key is an environment variable, with no rotation or KMS; S3 Object Lock is not configured by the script. See `ledger/README.md`.
 
 ### Fixed (gate: per-call ledger work is O(new events), not O(all events); behaviour-preserving)
 
