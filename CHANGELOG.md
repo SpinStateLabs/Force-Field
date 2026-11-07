@@ -8,6 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## [Unreleased]
 
+### Known limits (ledger shipper, `ledger/ledger_ship.py`; decision recorded 2026-11-07)
+
+- **The S3 sink has not been run against live AWS S3, by decision.** It was tested only against `moto` (a local mock). What `moto` cannot show, and what stays unverified: that real S3 enforces `IfNoneMatch: *` (an existing record or seal is never overwritten), and behaviour under Object Lock and versioning. Anyone using `s3://` should run `ledger_ship.py ship` and `verify` against a scratch bucket first, and try an overwrite. The Postgres and `dir:` sinks are tested as described in the 2.1.0 entry.
+
 ### Planned
 
 - FORCE v1.1 refinements based on real-world usage feedback.
