@@ -1,0 +1,167 @@
+{
+  "active": false,
+  "connections": {
+    "Field Gate": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Respond Verdict",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Field Operate": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Respond Operate",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Gate Webhook": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Field Gate",
+            "type": "main"
+          }
+        ]
+      ]
+    },
+    "Operate Webhook": {
+      "main": [
+        [
+          {
+            "index": 0,
+            "node": "Field Operate",
+            "type": "main"
+          }
+        ]
+      ]
+    }
+  },
+  "name": "FIELD reference enforcement (ssl-fp)",
+  "nodes": [
+    {
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE-ME",
+          "name": "FIELD gate caller"
+        }
+      },
+      "id": "5c1d0001-0000-4000-8000-00000000f001",
+      "name": "Gate Webhook",
+      "parameters": {
+        "authentication": "headerAuth",
+        "httpMethod": "POST",
+        "options": {},
+        "path": "field-gate",
+        "responseMode": "responseNode"
+      },
+      "position": [
+        0,
+        0
+      ],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "5c1d0001-0000-4000-8000-00000000f001"
+    },
+    {
+      "id": "5c1d0001-0000-4000-8000-00000000f002",
+      "name": "Field Gate",
+      "parameters": {
+        "jsCode": "// FIELD reference enforcement core (n8n). Pure, dependency-free except Node's `crypto`.\n//\n// A deliberately THIN subset of the Claude Code Enforcement Gate (hooks/field-gate.py), for a host that is not\n// Claude Code: E1 kill switch, E3 irreversible-action patterns (+ policy verdicts), E4 per-session tool-call\n// budget, L sha-256 hash-chained ledger. NOT implemented: E2 protected paths, E5 session-written exec, shell\n// canonicalisation (e3_variants), the estate sentinel. See ../README.md \"What this is not\".\n//\n// decide(manifest, input, state, now) -> { permissionDecision: \"allow\"|\"deny\"|\"ask\", rule, reason, hash }\n//   manifest  the FIELD manifest as a JSON object (manifest_to_json.py converts the YAML)\n//   input     { session_id, tool_name, tool_input, tool_use_id?, permission_mode? }  (the Claude Code hook shape)\n//   state     { killed: bool, counts: {session: n}, lastHash: str, ledger: [record] }  -- mutated\n// Fail-closed: any error is a deny with rule E0.\n\"use strict\";\nconst crypto = require(\"crypto\");\n\nconst SHELL_TOOLS = [\"Bash\", \"PowerShell\"];\nconst UNGATED = [\"Read\", \"Glob\", \"Grep\", \"LS\", \"NotebookRead\", \"TodoWrite\"];\nconst MAX_COMMAND_BYTES = 64 * 1024;\nconst ASK_MODES = [\"default\", \"acceptEdits\", \"auto\", \"dontAsk\", \"bypassPermissions\"];\nconst POLICY_VERDICT = { forbid: \"deny\", require_human_approval: \"ask\", allow_with_ledger: \"allow\" };\nconst LEDGER_MAX = 1000; // records kept in n8n static data; ship them to a real store (see README)\n\nconst sha256 = (s) => crypto.createHash(\"sha256\").update(s, \"utf8\").digest(\"hex\");\n\n// json.dumps(obj, sort_keys=True) as Python writes it (\", \" and \": \" separators, ensure_ascii), so a chain\n// written here verifies under hooks/verify-ledger.py. Integers, strings, booleans, null, arrays, objects only.\nfunction pyJson(v) {\n  if (v === null || v === undefined) return \"null\";\n  if (typeof v === \"boolean\") return v ? \"true\" : \"false\";\n  if (typeof v === \"number\") {\n    if (!Number.isInteger(v)) throw new Error(\"non-integer number in a ledger record\");\n    return String(v);\n  }\n  if (typeof v === \"string\") {\n    let out = '\"';\n    for (let i = 0; i < v.length; i++) {\n      const c = v.charCodeAt(i);\n      const ch = v[i];\n      if (ch === '\"') out += '\\\\\"';\n      else if (ch === \"\\\\\") out += \"\\\\\\\\\";\n      else if (ch === \"\\n\") out += \"\\\\n\";\n      else if (ch === \"\\r\") out += \"\\\\r\";\n      else if (ch === \"\\t\") out += \"\\\\t\";\n      else if (ch === \"\\b\") out += \"\\\\b\";\n      else if (ch === \"\\f\") out += \"\\\\f\";\n      else if (c < 0x20 || c > 0x7e) out += c === 0x7f ? ch : \"\\\\u\" + c.toString(16).padStart(4, \"0\");\n      else out += ch;\n    }\n    return out + '\"';\n  }\n  if (Array.isArray(v)) return \"[\" + v.map(pyJson).join(\", \") + \"]\";\n  if (typeof v === \"object\") {\n    return \"{\" + Object.keys(v).sort().map((k) => pyJson(k) + \": \" + pyJson(v[k])).join(\", \") + \"}\";\n  }\n  throw new Error(\"unserialisable value in a ledger record\");\n}\n\nfunction isoUtc(now) { // Python's datetime.isoformat() form: 2026-11-06T18:46:19.123456+00:00\n  return new Date(now).toISOString().replace(/\\.(\\d{3})Z$/, \".$1000+00:00\");\n}\n\n// Python re.search pattern -> JS RegExp. Supports a leading (?i) (PowerShell patterns use it). Any other inline\n// flag group cannot be translated faithfully, so it throws and the call is denied (E0), never silently ignored.\nfunction compilePattern(pat, ignoreCase) {\n  let src = String(pat);\n  let flags = ignoreCase ? \"i\" : \"\";\n  const lead = /^\\(\\?([a-z]+)\\)/.exec(src);\n  if (lead) {\n    if (lead[1] !== \"i\") throw new Error(\"unsupported inline flag in pattern: \" + lead[0]);\n    flags = \"i\";\n    src = src.slice(lead[0].length);\n  }\n  if (/\\(\\?[a-zA-Z-]+[:)]/.test(src)) throw new Error(\"unsupported inline flag group in pattern\");\n  return new RegExp(src, flags);\n}\n\nfunction budgetOf(enf) {\n  for (const e of enf.rate_limits || []) {\n    if (!e || typeof e !== \"object\") continue;\n    const action = String(e.action || \"\").trim().toLowerCase();\n    const period = String(e.period || \"\").trim().toLowerCase();\n    if (action === \"tool_call\" && [\"session\", \"per-session\", \"per_session\"].includes(period)) {\n      const n = parseInt(e.max, 10);\n      return Number.isNaN(n) ? null : n;\n    }\n  }\n  return null;\n}\n\nfunction append(state, event, extra, now) {\n  const prev = state.lastHash || \"0\".repeat(64);\n  const rec = Object.assign({}, event, extra, { prev_hash: prev });\n  rec.hash = sha256(prev + pyJson(rec)); // hash covers the record without \"hash\", like ledger_append()\n  state.lastHash = rec.hash;\n  state.ledger.push(rec);\n  if (state.ledger.length > LEDGER_MAX) state.ledger.splice(0, state.ledger.length - LEDGER_MAX);\n  return rec;\n}\n\nfunction decide(manifest, input, state, now) {\n  state.counts = state.counts || {};\n  state.ledger = state.ledger || [];\n  let event = { ts: isoUtc(now), tool: \"unknown\", store_source: \"n8n\" };\n  const out = (decision, rule, reason) => {\n    const extra = { decision };\n    if (rule) { extra.rule = rule; extra.reason = reason; }\n    const rec = append(state, event, extra, now);\n    return { permissionDecision: decision, rule: rule || null, reason: reason || null, hash: rec.hash };\n  };\n  try {\n    const inp = input && typeof input === \"object\" && !Array.isArray(input) ? input : null;\n    const tool = inp && typeof inp.tool_name === \"string\" ? inp.tool_name : \"\";\n    const ti = inp && inp.tool_input && typeof inp.tool_input === \"object\" ? inp.tool_input : {};\n    event = {\n      ts: isoUtc(now), session: (inp && inp.session_id) || \"unknown\", tool: tool || \"unknown\",\n      tool_use_id: (inp && inp.tool_use_id) || null, permission_mode: (inp && inp.permission_mode) || null,\n      input_digest: sha256(pyJson(ti)).slice(0, 16), store_source: \"n8n\",\n    };\n    if (!inp || !tool) return out(\"deny\", \"E0\", \"input is not a tool call (no tool_name); fail-closed\");\n    if (!manifest || typeof manifest !== \"object\" || Array.isArray(manifest)) {\n      return out(\"deny\", \"E0\", \"manifest missing or not an object; fail-closed\");\n    }\n    const enf = manifest.enforcement;\n    if (!enf || typeof enf !== \"object\" || Array.isArray(enf)) {\n      return out(\"deny\", \"E0\", \"enforcement section missing or not a mapping; fail-closed\");\n    }\n\n    // E1 kill switch. A kill always holds, including for read-only tools (the Python gate reads the default\n    // sentinel before the UNGATED shortcut for the same reason).\n    if (state.killed) return out(\"deny\", \"E1\", \"kill switch tripped; all tool calls halted\");\n\n    if (UNGATED.includes(tool)) return out(\"allow\");\n\n    const isShell = SHELL_TOOLS.includes(tool);\n    const cmd = isShell ? String(ti.command || \"\") : \"\";\n    if (isShell && Buffer.byteLength(cmd, \"utf8\") > MAX_COMMAND_BYTES) {\n      return out(\"deny\", \"E0\", \"shell command exceeds \" + MAX_COMMAND_BYTES + \" bytes; fail-closed\");\n    }\n\n    // E3 irreversible-action patterns, then (policy mode) the manifest's irreversible_action_policy.\n    let pending = null;\n    if (isShell) {\n      const ia = enf.irreversible_actions || {};\n      if (typeof ia !== \"object\" || Array.isArray(ia)) return out(\"deny\", \"E0\", \"irreversible_actions is not a mapping; fail-closed\");\n      const vmode = String(ia.deny_patterns_verdict || \"deny\").trim().toLowerCase();\n      if (![\"deny\", \"policy\"].includes(vmode)) return out(\"deny\", \"E0\", \"deny_patterns_verdict must be deny or policy; fail-closed\");\n      const pats = ia.deny_patterns || [];\n      if (!Array.isArray(pats)) return out(\"deny\", \"E0\", \"deny_patterns is not a list; fail-closed\");\n      for (const pat of pats) {\n        let rx;\n        try { rx = compilePattern(pat, tool === \"PowerShell\"); } catch (e) {\n          return out(\"deny\", \"E0\", \"invalid deny_patterns entry (\" + e.message + \"); fail-closed\");\n        }\n        if (!rx.test(cmd)) continue;\n        if (vmode === \"deny\") return out(\"deny\", \"E3\", \"command matched irreversible-action pattern '\" + pat + \"'\");\n        const verdict = POLICY_VERDICT[String(enf.irreversible_action_policy || \"\").trim().toLowerCase()];\n        if (!verdict) return out(\"deny\", \"E0\", \"deny_patterns_verdict is policy but irreversible_action_policy is missing or invalid; fail-closed\");\n        if (verdict === \"deny\") return out(\"deny\", \"E3\", \"command matched irreversible-action pattern '\" + pat + \"' (irreversible_action_policy: forbid)\");\n        if (verdict === \"ask\") {\n          if (!ASK_MODES.includes(inp.permission_mode)) {\n            return out(\"deny\", \"E3\", \"command matched irreversible-action pattern '\" + pat + \"'; policy is require_human_approval but permission_mode \" + JSON.stringify(inp.permission_mode || null) + \" has no known human prompt; denied\");\n          }\n          pending = [\"ask\", \"E3-policy\", \"command matched irreversible-action pattern '\" + pat + \"'; irreversible_action_policy is require_human_approval\"];\n        } else {\n          pending = [\"allow\", \"E3-allowed\", \"command matched irreversible-action pattern '\" + pat + \"'; irreversible_action_policy is allow_with_ledger\"];\n        }\n        break;\n      }\n    }\n\n    // E4 per-session tool-call budget (counts gated calls that reach this point, as the Python gate does).\n    const budget = budgetOf(enf);\n    if (budget !== null) {\n      const sid = String(event.session);\n      const n = (state.counts[sid] || 0) + 1;\n      state.counts[sid] = n;\n      if (n > budget) return out(\"deny\", \"E4\", \"session tool-call budget \" + budget + \" exceeded (call #\" + n + \")\");\n    }\n\n    if (pending) return out(pending[0], pending[1], pending[2]);\n    return out(\"allow\");\n  } catch (e) {\n    return out(\"deny\", \"E0\", \"gate error (\" + (e && e.message ? e.message : \"unknown\") + \"); fail-closed\");\n  }\n}\n\n// Operator actions (kill / resume) are ledgered like any decision.\nfunction operate(state, op, now) {\n  state.ledger = state.ledger || [];\n  if (op !== \"kill\" && op !== \"resume\") throw new Error(\"unknown operator action\");\n  state.killed = op === \"kill\";\n  const rec = append(state, { ts: isoUtc(now), session: \"operator\", tool: \"operator\", store_source: \"n8n\" },\n    { decision: \"allow\", rule: op === \"kill\" ? \"E1-kill\" : \"E1-resume\", reason: \"operator \" + op }, now);\n  return { killed: state.killed, hash: rec.hash };\n}\n\n// ---- n8n glue ----\n// MANIFEST: replace with `manifest_to_json.py your-manifest.yaml`. An empty or malformed manifest denies every call (E0).\nconst MANIFEST = {\n  \"agent\": {\n    \"description\": \"Implements an assigned backlog slice on its own branch, tests it, and opens a draft PR. Cannot merge.\",\n    \"name\": \"ssl-fp-builder\",\n    \"version\": \"0.1.0\"\n  },\n  \"delegation\": {\n    \"expiry\": \"2027-01-01\",\n    \"granted_by\": \"REPLACE-ME authorizing principal\",\n    \"revocation\": {\n      \"endpoint\": \".claude/state/KILL\",\n      \"method\": \"file\"\n    },\n    \"scope\": [\n      \"read the repository and backlog\",\n      \"edit files inside the assigned slice\",\n      \"run the repository's tests and checks\",\n      \"commit and push to the branch ssl-fp-builder-<n> only\",\n      \"open and update a draft PR from that branch\"\n    ]\n  },\n  \"enforcement\": {\n    \"escalation_triggers\": [\n      \"a backlog item is ambiguous, already built, or overlaps another builder's slice\",\n      \"a change would touch files outside the assigned slice\",\n      \"CI is red for a reason outside the change\",\n      \"any request to merge, release, tag or push to the default branch\"\n    ],\n    \"irreversible_action_policy\": \"require_human_approval\",\n    \"irreversible_actions\": {\n      \"deny_patterns\": [\n        \"\\\\bgit\\\\s+push\\\\s+.*(--force|-f\\\\b|--force-with-lease)\",\n        \"\\\\bgit\\\\s+push\\\\s+\\\\S+\\\\s+(HEAD:)?(main|master)\\\\b\",\n        \"\\\\bgit\\\\s+push\\\\s+.*--delete\\\\b\",\n        \"\\\\bgh\\\\s+pr\\\\s+merge\\\\b\",\n        \"\\\\bgit\\\\s+tag\\\\b\",\n        \"\\\\brm\\\\s+-rf\\\\b\",\n        \"(?i)\\\\bRemove-Item\\\\b.*-Recurse\"\n      ],\n      \"session_written_exec\": \"deny\"\n    },\n    \"kill_switch\": {\n      \"authorized_operators\": [\n        \"REPLACE-ME operator\"\n      ],\n      \"endpoint\": \".claude/state/KILL\",\n      \"method\": \"file\"\n    },\n    \"protected_paths\": [\n      \"(^|/)\\\\.github/workflows/\"\n    ],\n    \"rate_limits\": [\n      {\n        \"action\": \"tool_call\",\n        \"max\": 400,\n        \"period\": \"session\"\n      }\n    ]\n  },\n  \"federated\": {\n    \"allowed_peers\": [\n      {\n        \"agent_id\": \"ssl-fp-coordinator\",\n        \"org\": \"Spin State Labs\",\n        \"trust_basis\": \"REPLACE-ME (e.g. same-account session registry entry)\"\n      },\n      {\n        \"agent_id\": \"ssl-fp-reviewer\",\n        \"org\": \"Spin State Labs\",\n        \"trust_basis\": \"REPLACE-ME\"\n      }\n    ],\n    \"contracts\": [\n      {\n        \"peer\": \"ssl-fp-coordinator\",\n        \"scope\": \"receives work items and slice boundaries; reports status and blockers; never receives authority to merge\"\n      },\n      {\n        \"peer\": \"ssl-fp-reviewer\",\n        \"scope\": \"its draft PR is reviewed; it addresses review comments; it does not review its own work\"\n      }\n    ],\n    \"isolated\": false\n  },\n  \"identity\": {\n    \"data_scope\": {\n      \"may_access\": [\n        \"the attached repository checkout\",\n        \"the PR, CI and review state of that repository\"\n      ],\n      \"may_retain\": [\n        \"its own branch, tasks/todo.md and tasks/lessons.md\"\n      ],\n      \"may_transmit\": [\n        \"commits to its own branch; its own draft PR\"\n      ]\n    },\n    \"jurisdiction\": [\n      \"REPLACE-ME\"\n    ],\n    \"model_provider\": \"REPLACE-ME\",\n    \"org\": \"Spin State Labs\",\n    \"principal\": \"REPLACE-ME principal (e.g. the CTO who assigned the slice)\"\n  },\n  \"ledger\": {\n    \"cryptographic_seal\": true,\n    \"logged_events\": [\n      \"every action\",\n      \"every escalation\",\n      \"every delegation use\"\n    ],\n    \"retention_days\": 365,\n    \"seal_algorithm\": \"sha-256-chain\",\n    \"store\": \"file://./.field/ledger.jsonl\"\n  },\n  \"runtime_protocol\": {\n    \"name\": \"FORCE\",\n    \"preset\": \"analysis\",\n    \"version\": \"1.0\"\n  },\n  \"schema_version\": \"field.spinstatelabs.ca/v1\"\n};\nconst sd = $getWorkflowStaticData(\"global\");\nsd.field = sd.field || { killed: false, counts: {}, lastHash: \"0\".repeat(64), ledger: [] };\nreturn $input.all().map((item) => ({ json: decide(MANIFEST, item.json.body !== undefined ? item.json.body : item.json, sd.field, Date.now()) }));\n",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "position": [
+        260,
+        0
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "5c1d0001-0000-4000-8000-00000000f003",
+      "name": "Respond Verdict",
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "position": [
+        520,
+        0
+      ],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    },
+    {
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "REPLACE-ME",
+          "name": "FIELD operator"
+        }
+      },
+      "id": "5c1d0001-0000-4000-8000-00000000f004",
+      "name": "Operate Webhook",
+      "parameters": {
+        "authentication": "headerAuth",
+        "httpMethod": "POST",
+        "options": {},
+        "path": "field-operate",
+        "responseMode": "responseNode"
+      },
+      "position": [
+        0,
+        240
+      ],
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "5c1d0001-0000-4000-8000-00000000f004"
+    },
+    {
+      "id": "5c1d0001-0000-4000-8000-00000000f005",
+      "name": "Field Operate",
+      "parameters": {
+        "jsCode": "// FIELD reference enforcement core (n8n). Pure, dependency-free except Node's `crypto`.\n//\n// A deliberately THIN subset of the Claude Code Enforcement Gate (hooks/field-gate.py), for a host that is not\n// Claude Code: E1 kill switch, E3 irreversible-action patterns (+ policy verdicts), E4 per-session tool-call\n// budget, L sha-256 hash-chained ledger. NOT implemented: E2 protected paths, E5 session-written exec, shell\n// canonicalisation (e3_variants), the estate sentinel. See ../README.md \"What this is not\".\n//\n// decide(manifest, input, state, now) -> { permissionDecision: \"allow\"|\"deny\"|\"ask\", rule, reason, hash }\n//   manifest  the FIELD manifest as a JSON object (manifest_to_json.py converts the YAML)\n//   input     { session_id, tool_name, tool_input, tool_use_id?, permission_mode? }  (the Claude Code hook shape)\n//   state     { killed: bool, counts: {session: n}, lastHash: str, ledger: [record] }  -- mutated\n// Fail-closed: any error is a deny with rule E0.\n\"use strict\";\nconst crypto = require(\"crypto\");\n\nconst SHELL_TOOLS = [\"Bash\", \"PowerShell\"];\nconst UNGATED = [\"Read\", \"Glob\", \"Grep\", \"LS\", \"NotebookRead\", \"TodoWrite\"];\nconst MAX_COMMAND_BYTES = 64 * 1024;\nconst ASK_MODES = [\"default\", \"acceptEdits\", \"auto\", \"dontAsk\", \"bypassPermissions\"];\nconst POLICY_VERDICT = { forbid: \"deny\", require_human_approval: \"ask\", allow_with_ledger: \"allow\" };\nconst LEDGER_MAX = 1000; // records kept in n8n static data; ship them to a real store (see README)\n\nconst sha256 = (s) => crypto.createHash(\"sha256\").update(s, \"utf8\").digest(\"hex\");\n\n// json.dumps(obj, sort_keys=True) as Python writes it (\", \" and \": \" separators, ensure_ascii), so a chain\n// written here verifies under hooks/verify-ledger.py. Integers, strings, booleans, null, arrays, objects only.\nfunction pyJson(v) {\n  if (v === null || v === undefined) return \"null\";\n  if (typeof v === \"boolean\") return v ? \"true\" : \"false\";\n  if (typeof v === \"number\") {\n    if (!Number.isInteger(v)) throw new Error(\"non-integer number in a ledger record\");\n    return String(v);\n  }\n  if (typeof v === \"string\") {\n    let out = '\"';\n    for (let i = 0; i < v.length; i++) {\n      const c = v.charCodeAt(i);\n      const ch = v[i];\n      if (ch === '\"') out += '\\\\\"';\n      else if (ch === \"\\\\\") out += \"\\\\\\\\\";\n      else if (ch === \"\\n\") out += \"\\\\n\";\n      else if (ch === \"\\r\") out += \"\\\\r\";\n      else if (ch === \"\\t\") out += \"\\\\t\";\n      else if (ch === \"\\b\") out += \"\\\\b\";\n      else if (ch === \"\\f\") out += \"\\\\f\";\n      else if (c < 0x20 || c > 0x7e) out += c === 0x7f ? ch : \"\\\\u\" + c.toString(16).padStart(4, \"0\");\n      else out += ch;\n    }\n    return out + '\"';\n  }\n  if (Array.isArray(v)) return \"[\" + v.map(pyJson).join(\", \") + \"]\";\n  if (typeof v === \"object\") {\n    return \"{\" + Object.keys(v).sort().map((k) => pyJson(k) + \": \" + pyJson(v[k])).join(\", \") + \"}\";\n  }\n  throw new Error(\"unserialisable value in a ledger record\");\n}\n\nfunction isoUtc(now) { // Python's datetime.isoformat() form: 2026-11-06T18:46:19.123456+00:00\n  return new Date(now).toISOString().replace(/\\.(\\d{3})Z$/, \".$1000+00:00\");\n}\n\n// Python re.search pattern -> JS RegExp. Supports a leading (?i) (PowerShell patterns use it). Any other inline\n// flag group cannot be translated faithfully, so it throws and the call is denied (E0), never silently ignored.\nfunction compilePattern(pat, ignoreCase) {\n  let src = String(pat);\n  let flags = ignoreCase ? \"i\" : \"\";\n  const lead = /^\\(\\?([a-z]+)\\)/.exec(src);\n  if (lead) {\n    if (lead[1] !== \"i\") throw new Error(\"unsupported inline flag in pattern: \" + lead[0]);\n    flags = \"i\";\n    src = src.slice(lead[0].length);\n  }\n  if (/\\(\\?[a-zA-Z-]+[:)]/.test(src)) throw new Error(\"unsupported inline flag group in pattern\");\n  return new RegExp(src, flags);\n}\n\nfunction budgetOf(enf) {\n  for (const e of enf.rate_limits || []) {\n    if (!e || typeof e !== \"object\") continue;\n    const action = String(e.action || \"\").trim().toLowerCase();\n    const period = String(e.period || \"\").trim().toLowerCase();\n    if (action === \"tool_call\" && [\"session\", \"per-session\", \"per_session\"].includes(period)) {\n      const n = parseInt(e.max, 10);\n      return Number.isNaN(n) ? null : n;\n    }\n  }\n  return null;\n}\n\nfunction append(state, event, extra, now) {\n  const prev = state.lastHash || \"0\".repeat(64);\n  const rec = Object.assign({}, event, extra, { prev_hash: prev });\n  rec.hash = sha256(prev + pyJson(rec)); // hash covers the record without \"hash\", like ledger_append()\n  state.lastHash = rec.hash;\n  state.ledger.push(rec);\n  if (state.ledger.length > LEDGER_MAX) state.ledger.splice(0, state.ledger.length - LEDGER_MAX);\n  return rec;\n}\n\nfunction decide(manifest, input, state, now) {\n  state.counts = state.counts || {};\n  state.ledger = state.ledger || [];\n  let event = { ts: isoUtc(now), tool: \"unknown\", store_source: \"n8n\" };\n  const out = (decision, rule, reason) => {\n    const extra = { decision };\n    if (rule) { extra.rule = rule; extra.reason = reason; }\n    const rec = append(state, event, extra, now);\n    return { permissionDecision: decision, rule: rule || null, reason: reason || null, hash: rec.hash };\n  };\n  try {\n    const inp = input && typeof input === \"object\" && !Array.isArray(input) ? input : null;\n    const tool = inp && typeof inp.tool_name === \"string\" ? inp.tool_name : \"\";\n    const ti = inp && inp.tool_input && typeof inp.tool_input === \"object\" ? inp.tool_input : {};\n    event = {\n      ts: isoUtc(now), session: (inp && inp.session_id) || \"unknown\", tool: tool || \"unknown\",\n      tool_use_id: (inp && inp.tool_use_id) || null, permission_mode: (inp && inp.permission_mode) || null,\n      input_digest: sha256(pyJson(ti)).slice(0, 16), store_source: \"n8n\",\n    };\n    if (!inp || !tool) return out(\"deny\", \"E0\", \"input is not a tool call (no tool_name); fail-closed\");\n    if (!manifest || typeof manifest !== \"object\" || Array.isArray(manifest)) {\n      return out(\"deny\", \"E0\", \"manifest missing or not an object; fail-closed\");\n    }\n    const enf = manifest.enforcement;\n    if (!enf || typeof enf !== \"object\" || Array.isArray(enf)) {\n      return out(\"deny\", \"E0\", \"enforcement section missing or not a mapping; fail-closed\");\n    }\n\n    // E1 kill switch. A kill always holds, including for read-only tools (the Python gate reads the default\n    // sentinel before the UNGATED shortcut for the same reason).\n    if (state.killed) return out(\"deny\", \"E1\", \"kill switch tripped; all tool calls halted\");\n\n    if (UNGATED.includes(tool)) return out(\"allow\");\n\n    const isShell = SHELL_TOOLS.includes(tool);\n    const cmd = isShell ? String(ti.command || \"\") : \"\";\n    if (isShell && Buffer.byteLength(cmd, \"utf8\") > MAX_COMMAND_BYTES) {\n      return out(\"deny\", \"E0\", \"shell command exceeds \" + MAX_COMMAND_BYTES + \" bytes; fail-closed\");\n    }\n\n    // E3 irreversible-action patterns, then (policy mode) the manifest's irreversible_action_policy.\n    let pending = null;\n    if (isShell) {\n      const ia = enf.irreversible_actions || {};\n      if (typeof ia !== \"object\" || Array.isArray(ia)) return out(\"deny\", \"E0\", \"irreversible_actions is not a mapping; fail-closed\");\n      const vmode = String(ia.deny_patterns_verdict || \"deny\").trim().toLowerCase();\n      if (![\"deny\", \"policy\"].includes(vmode)) return out(\"deny\", \"E0\", \"deny_patterns_verdict must be deny or policy; fail-closed\");\n      const pats = ia.deny_patterns || [];\n      if (!Array.isArray(pats)) return out(\"deny\", \"E0\", \"deny_patterns is not a list; fail-closed\");\n      for (const pat of pats) {\n        let rx;\n        try { rx = compilePattern(pat, tool === \"PowerShell\"); } catch (e) {\n          return out(\"deny\", \"E0\", \"invalid deny_patterns entry (\" + e.message + \"); fail-closed\");\n        }\n        if (!rx.test(cmd)) continue;\n        if (vmode === \"deny\") return out(\"deny\", \"E3\", \"command matched irreversible-action pattern '\" + pat + \"'\");\n        const verdict = POLICY_VERDICT[String(enf.irreversible_action_policy || \"\").trim().toLowerCase()];\n        if (!verdict) return out(\"deny\", \"E0\", \"deny_patterns_verdict is policy but irreversible_action_policy is missing or invalid; fail-closed\");\n        if (verdict === \"deny\") return out(\"deny\", \"E3\", \"command matched irreversible-action pattern '\" + pat + \"' (irreversible_action_policy: forbid)\");\n        if (verdict === \"ask\") {\n          if (!ASK_MODES.includes(inp.permission_mode)) {\n            return out(\"deny\", \"E3\", \"command matched irreversible-action pattern '\" + pat + \"'; policy is require_human_approval but permission_mode \" + JSON.stringify(inp.permission_mode || null) + \" has no known human prompt; denied\");\n          }\n          pending = [\"ask\", \"E3-policy\", \"command matched irreversible-action pattern '\" + pat + \"'; irreversible_action_policy is require_human_approval\"];\n        } else {\n          pending = [\"allow\", \"E3-allowed\", \"command matched irreversible-action pattern '\" + pat + \"'; irreversible_action_policy is allow_with_ledger\"];\n        }\n        break;\n      }\n    }\n\n    // E4 per-session tool-call budget (counts gated calls that reach this point, as the Python gate does).\n    const budget = budgetOf(enf);\n    if (budget !== null) {\n      const sid = String(event.session);\n      const n = (state.counts[sid] || 0) + 1;\n      state.counts[sid] = n;\n      if (n > budget) return out(\"deny\", \"E4\", \"session tool-call budget \" + budget + \" exceeded (call #\" + n + \")\");\n    }\n\n    if (pending) return out(pending[0], pending[1], pending[2]);\n    return out(\"allow\");\n  } catch (e) {\n    return out(\"deny\", \"E0\", \"gate error (\" + (e && e.message ? e.message : \"unknown\") + \"); fail-closed\");\n  }\n}\n\n// Operator actions (kill / resume) are ledgered like any decision.\nfunction operate(state, op, now) {\n  state.ledger = state.ledger || [];\n  if (op !== \"kill\" && op !== \"resume\") throw new Error(\"unknown operator action\");\n  state.killed = op === \"kill\";\n  const rec = append(state, { ts: isoUtc(now), session: \"operator\", tool: \"operator\", store_source: \"n8n\" },\n    { decision: \"allow\", rule: op === \"kill\" ? \"E1-kill\" : \"E1-resume\", reason: \"operator \" + op }, now);\n  return { killed: state.killed, hash: rec.hash };\n}\n\n// ---- n8n glue ----\nconst sd = $getWorkflowStaticData(\"global\");\nsd.field = sd.field || { killed: false, counts: {}, lastHash: \"0\".repeat(64), ledger: [] };\nreturn $input.all().map((item) => {\n  const body = item.json.body !== undefined ? item.json.body : item.json;\n  return { json: operate(sd.field, body && body.op, Date.now()) };\n});\n",
+        "language": "javaScript",
+        "mode": "runOnceForAllItems"
+      },
+      "position": [
+        260,
+        240
+      ],
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2
+    },
+    {
+      "id": "5c1d0001-0000-4000-8000-00000000f006",
+      "name": "Respond Operate",
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "position": [
+        520,
+        240
+      ],
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1
+    }
+  ],
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

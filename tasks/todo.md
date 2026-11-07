@@ -20,3 +20,12 @@ Builder-1 = 1, 3, 5. Builder-2 = 2, 4, 6.
 - run_all.sh: ALL GATE SUITES PASSED on posix (incl. new run_compose.sh, 13 PASS). Windows leg runs in CI only (not run here).
 - run_post_hook.sh registration assertion updated for the SessionStart event (it failed until then; baseline passed).
 - Not verified: live Claude Code SessionStart injection (no claude CLI session here); only the hook contract is tested.
+
+## Item 6 (n8n reference enforcement) -- deferred 2026-11-05, taken by the principal 2026-11-06
+- [x] Core decision logic (field-gate-core.js): E1, E3 + policy, E4, ledger; fail-closed
+- [x] build_workflow.py / manifest_to_json.py / generated workflow (6 nodes, header-auth webhooks)
+- [x] Tests: decisions, differential vs field-gate.py, known-gap assertions, ledger parity, workflow sync + stubbed Code-node run
+- [x] Mutation checks: disabling E1 or E3 makes tests fail
+- [x] README with limits; CHANGELOG [Unreleased]; ROADMAP; CI step (Linux job)
+- [x] Live n8n 2.46.6: import OK; Field Gate Code node executed via `n8n execute` (4 decisions correct; crypto builtin must be allowed)
+- [ ] Not done: webhook activation + HTTP calls (starting a local n8n server was denied by the session classifier)
