@@ -26,8 +26,14 @@ for the answer. Reference quality: read it, adapt it, do not treat it as the Enf
 - **Ledger is not durable.** It lives in n8n workflow static data (last 1000 records), which n8n saves only for
   production (activated) executions, not manual test runs. Ship it to a real store; `../ledger/ledger_ship.py` is the
   reference shipper for files, S3 and Postgres. The chain is tamper-evident, not tamper-proof.
-- **Single-writer assumption.** Parallel executions can race on the static data (counter and chain tip). The Python gate
-  holds a file lock for this; n8n offers none. Run the workflow with concurrency 1 if the chain must stay linear.
+- **Not safe under concurrent calls (measured).** n8n saves static data per execution, last writer wins. With 30 parallel
+  `/field-gate` calls, all 30 answered `allow` but only 2 ledger records and a session count of 2 were kept, so **E4 undercounts
+  and ledger records are lost**; a `kill` issued during a burst of 25 gate calls was **silently undone** (the kill call
+  succeeded, the persisted flag ended `false`, the next call was allowed). Setting `N8N_CONCURRENCY_PRODUCTION_LIMIT=1` did
+  **not** serialise these webhook executions in the test (30 calls in 1 s, 1 record kept), so do not rely on it.
+  Sequential calls are correct: 30 calls kept 30 records and a count of 30, and the 47-record chain verified intact.
+  Until this is redesigned, serialise calls at the **caller** (one in flight at a time) and do not use this workflow for kill
+  or budget enforcement with concurrent callers. The Python gate takes a file lock for exactly this reason.
 - **Regex dialect.** Patterns are Python regexes in the manifest. A leading `(?i)` is translated; any other inline flag
   (`(?s)`, `(?x)`, `(?i:...)`) is an E0 deny, never silently dropped. Other Python/JS differences (named groups,
   possessive quantifiers) are not translated.
@@ -65,13 +71,14 @@ To change the manifest, regenerate the workflow (the Code node embeds it as a `M
 
 ## Verification
 
-Run once against n8n 2.46.6 (Node 24), 2026-11-06:
+Run against n8n 2.46.6 (Node 24, legacy expression engine, bound to 127.0.0.1), 2026-11-06 and 2026-11-07:
 
-- **Done:** the generated workflow imported (`n8n import:workflow`, with two Header Auth credentials). The `Field Gate` Code
-  node was executed inside n8n (`n8n execute`, on a manual-trigger test copy): allow, deny E3, deny E3, allow for `ls`,
-  `git push --force`, `gh pr merge`, `Read`, as expected. Without `NODE_FUNCTION_ALLOW_BUILTIN=crypto` the node fails with
-  `DisallowedModuleError: Module 'crypto' is disallowed`, so that setting is required (and a failing node is an error, not an `allow`).
-- **Not done:** activating the workflow and calling the webhooks. The Webhook nodes, Header Auth, the Respond to Webhook nodes
-  (`responseBody` is an expression), the Operate path in n8n, static-data persistence across executions and concurrent
-  executions were not exercised in n8n; the stubbed run in `test/` covers the Operate and static-data logic only. The native
-  expression engine would not load in the test environment, so the legacy engine was used.
+- **Passed:** import with two Header Auth credentials; activation; webhook calls over HTTP. No auth, a wrong secret, and the
+  other webhook's secret each get 403. `ls` is allowed; `git push --force` is denied E3; `kill` then a call is denied E1;
+  `resume` restores; a body with no `tool_name` and an empty body are denied E0; invalid JSON gets HTTP 422 (the caller must
+  treat that as a block). Static data persisted between executions (the kill flag survived). The ledger read back from n8n's
+  database verifies under `hooks/verify-ledger.py`. Without `NODE_FUNCTION_ALLOW_BUILTIN=crypto` the Code node fails with
+  `DisallowedModuleError`.
+- **Failed:** concurrent calls, see "Not safe under concurrent calls" above.
+- **Not done:** n8n's native expression engine (would not load in the test environment, so the legacy engine ran the
+  `responseBody` expression), other n8n versions, queue mode, Windows.

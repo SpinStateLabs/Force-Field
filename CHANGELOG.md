@@ -8,6 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## [Unreleased]
 
+### Changed (docs: n8n reference enforcement concurrency finding)
+
+- `plugins/force-field/n8n/README.md`: the webhook path was run in a live n8n and passed (auth, verdicts, kill/resume, persistence, ledger verification). Concurrent calls were **not** safe: ledger records and E4 counts were lost and a kill issued during a burst was silently undone, and `N8N_CONCURRENCY_PRODUCTION_LIMIT=1` did not serialise the executions. The README now says so, replacing its earlier advice to run with concurrency 1. Shipped in 2.2.0 with the weaker wording; no code change.
+
 ### Known limits (ledger shipper, `ledger/ledger_ship.py`; decision recorded 2026-11-07)
 
 - **The S3 sink has not been run against live AWS S3, by decision.** It was tested only against `moto` (a local mock). What `moto` cannot show, and what stays unverified: that real S3 enforces `IfNoneMatch: *` (an existing record or seal is never overwritten), and behaviour under Object Lock and versioning. Anyone using `s3://` should run `ledger_ship.py ship` and `verify` against a scratch bucket first, and try an overwrite. The Postgres and `dir:` sinks are tested as described in the 2.1.0 entry.
