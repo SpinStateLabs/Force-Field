@@ -8,6 +8,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## [Unreleased]
 
+### Added (force-field: Estate Connector)
+
+- Plugin settings (`userConfig`): `estate_mode` (`local` | `estate`, default `local`), `estate_url` (the estate's MCP server URL) and `field_api_key` (sensitive). Set on install from `/plugin` or with `/plugin configure force-field@force-field`.
+- `.mcp.json` + `connector/estate_connector.py`: the `field-estate` stdio MCP server. Local mode: no network call, one `estate_status` tool. Estate mode: a Streamable-HTTP proxy to `estate_url` with `Authorization: Bearer <field_api_key>` (JSON and SSE replies, `Mcp-Session-Id`, session DELETE on exit). Refuses plain http except loopback, credentials in the URL, and redirects; a 401/403 is a named JSON-RPC error. Python 3 standard library only.
+- Tests: `connector/test/run_connector.sh` (13 cases against a local fake estate), a CI step on the Linux job. Checked by hand in Claude Code 2.1.319: install with `--config`, `/plugin configure --values-stdin`, `claude mcp list` connected in both modes, a wrong key reported as the auth error; the sensitive key was stored in `~/.claude/.credentials.json`, not `settings.json`.
+- Not verified: against the real FIELD platform estate (its MCP endpoint path, auth scheme and tool names are not in this repository; Bearer is assumed). The Enforcement Gate is unchanged and still local in both modes.
+
 ### Known limits (ledger shipper, `ledger/ledger_ship.py`; decision recorded 2026-11-07)
 
 - **The S3 sink has not been run against live AWS S3, by decision.** It was tested only against `moto` (a local mock). What `moto` cannot show, and what stays unverified: that real S3 enforces `IfNoneMatch: *` (an existing record or seal is never overwritten), and behaviour under Object Lock and versioning. Anyone using `s3://` should run `ledger_ship.py ship` and `verify` against a scratch bucket first, and try an overwrite. The Postgres and `dir:` sinks are tested as described in the 2.1.0 entry.
