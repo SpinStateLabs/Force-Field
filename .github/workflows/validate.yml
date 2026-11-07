@@ -173,6 +173,8 @@ jobs:
         run: bash plugins/force-field/hooks/test/run_ledger_ship.sh
       - name: n8n reference enforcement tests (decisions, differential vs the gate, ledger parity, workflow sync)
         run: bash plugins/force-field/n8n/test/run_n8n.sh
+      - name: Estate Connector tests (local mode, estate proxy, auth errors, manifest wiring)
+        run: bash plugins/force-field/connector/test/run_connector.sh
 
   # ADR-0080: the gate runs on Windows (Git Bash, as Claude Code runs hooks there) and must resolve junctions and
   # symlinks, strip extended-length prefixes and NTFS streams, and see 8.3 names. run_all.sh runs every suite, fails

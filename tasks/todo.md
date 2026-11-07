@@ -29,3 +29,11 @@ Builder-1 = 1, 3, 5. Builder-2 = 2, 4, 6.
 - [x] README with limits; CHANGELOG [Unreleased]; ROADMAP; CI step (Linux job)
 - [x] Live n8n 2.46.6: import OK; Field Gate Code node executed via `n8n execute` (4 decisions correct; crypto builtin must be allowed)
 - [ ] Not done: webhook activation + HTTP calls (starting a local n8n server was denied by the session classifier)
+
+## Estate Connector (2026-11-07, branch claude/epic-pasteur-ccfdgv)
+- [x] userConfig: estate_mode (local|estate, default local), estate_url, field_api_key (sensitive)
+- [x] .mcp.json + connector/estate_connector.py (local: no network, estate_status tool; estate: Streamable-HTTP proxy, Bearer key)
+- [x] Tests: connector/test/run_connector.sh (13 PASS) + CI step; run_all.sh ALL GATE SUITES PASSED; plugin validate --strict passed
+- [x] Live check, Claude Code 2.1.319: both modes connected in `claude mcp list`; wrong key -> -32002 auth error; key stored in ~/.claude/.credentials.json
+- [x] Auth scheme Bearer confirmed by Don (2026-11-07). [ ] Not done: run against the live platform estate
+- [x] Release 2.3.0 (plugin + marketplace) approved by Don 2026-11-07

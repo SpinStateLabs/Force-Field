@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "field-estate": {
+      "command": "python3",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/connector/estate_connector.py"],
+      "env": {
+        "FIELD_ESTATE_MODE": "${user_config.estate_mode}",
+        "FIELD_ESTATE_URL": "${user_config.estate_url}",
+        "FIELD_ESTATE_API_KEY": "${user_config.field_api_key}"
+      }
+    }
+  }
+}

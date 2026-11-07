@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "force-field",
   "displayName": "Force-Field Protocol",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Force-Field Protocol from Spin State Labs, one package: the FORCE runtime prompt protocol (/force), the FIELD governance framework (/field) with its Enforcement Gate hook (kill switch, protected paths, irreversible-action deny patterns, tool-call budget, hash-chained ledger), and a skill explaining how they compose. Replaces the separate force, field and force-field 1.x plugins.",
   "author": {
     "name": "Don Hagell",
@@ -22,5 +22,32 @@
     "anti-hallucination",
     "audit",
     "spin-state-labs"
-  ]
+  ],
+  "userConfig": {
+    "estate_mode": {
+      "type": "string",
+      "title": "FIELD mode",
+      "description": "local: FIELD runs on this machine only (Enforcement Gate hook and local ledger); no network calls. estate: connect to an existing estate created by the FIELD platform through its MCP server.",
+      "options": [
+        "local",
+        "estate"
+      ],
+      "default": "local",
+      "required": true
+    },
+    "estate_url": {
+      "type": "string",
+      "title": "Estate MCP server URL",
+      "description": "Estate mode only. The MCP server (Streamable HTTP) endpoint of your estate, e.g. https://estate.example.com/mcp. https required except for localhost.",
+      "default": "",
+      "required": false
+    },
+    "field_api_key": {
+      "type": "string",
+      "title": "FIELD API key",
+      "description": "Estate mode only. The API key the FIELD platform issued for your estate. Sent only to the estate URL as a Bearer token; stored as a secret.",
+      "sensitive": true,
+      "required": false
+    }
+  }
 }
