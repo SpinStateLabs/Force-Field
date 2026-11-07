@@ -172,7 +172,7 @@ An enforcement agent that continuously audits deployed agents against their FIEL
 
 - **Proof of concept (August 2026, complete)** — 21 days of blocking-mode operation on Spin State's own estate: 136 verdicts, zero false blocks; seeded-violation catch 40/40; kill drill passed.
 - **Pilot (targeted from September 14, 2026)** — a scoped client pilot, conditional on a signed sponsor; continuation gates: false-block rate below 1.6% over 30 consecutive days, no escalation unresolved past 48 hours.
-- **Estate Connector (force-field, unreleased)** — plugin settings switch between `local` and `estate`; in estate mode the `field-estate` MCP server connects Claude Code to an existing estate's MCP server with a FIELD API key. Not yet tested against the platform's own endpoint.
+- **Estate Connector (shipped in force-field 2.3.0)** — plugin settings switch between `local` and `estate`; in estate mode the `field-estate` MCP server connects Claude Code to an existing estate's MCP server with a FIELD API key. Not yet tested against the platform's own endpoint.
 - **General release (target November 2026)** — injection-corpus pass, pricing, support runbook. The gates, not the calendar, are the go condition.
 
 ### Future plugins under consideration

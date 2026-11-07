@@ -35,5 +35,5 @@ Builder-1 = 1, 3, 5. Builder-2 = 2, 4, 6.
 - [x] .mcp.json + connector/estate_connector.py (local: no network, estate_status tool; estate: Streamable-HTTP proxy, Bearer key)
 - [x] Tests: connector/test/run_connector.sh (13 PASS) + CI step; run_all.sh ALL GATE SUITES PASSED; plugin validate --strict passed
 - [x] Live check, Claude Code 2.1.319: both modes connected in `claude mcp list`; wrong key -> -32002 auth error; key stored in ~/.claude/.credentials.json
-- [ ] Not done: test against the real FIELD platform estate (endpoint path, auth scheme, tool names not in this repo; Bearer assumed)
-- [ ] Not done: release (version bump; the plugin cache is keyed by version, so existing 2.2.0 installs will not see this until a bump) -- plugin-agent release, principal's call
+- [x] Auth scheme Bearer confirmed by Don (2026-11-07). [ ] Not done: run against the live platform estate
+- [x] Release 2.3.0 (plugin + marketplace) approved by Don 2026-11-07
