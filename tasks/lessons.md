@@ -37,3 +37,6 @@ Format: pattern seen, then the rule that prevents it. Review at session start.
 
 12. **FORCE protocol applies to every reply** (user correction, 2026-11-07). The first dozen replies dropped the numbered structure and the O objections.
     Rule: use ASSUMPTIONS, REASONING (with O objections for proposals) and CONCLUSION, tag claims HIGH, MEDIUM or LOW, and keep each section minimal. The token and cost line says "not available" because this environment has no usage counters. Never invent figures.
+
+13. **Standing delegation (user, 2026-11-07): "you have the authority except for money and features; do not stop and ask, take your best recommendation or ask an advisor."**
+    Rule: act without asking on code, docs, PRs, pushes and merges of my own PRs, after verifying state. Still stop for money (paid or credentialed services such as a live AWS test) and for features (new capabilities or roadmap scope, such as the Conformance Sentinel or a new plugin). A tool or classifier denial is still final for that action: report it and move on.
