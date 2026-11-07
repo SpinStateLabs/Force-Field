@@ -164,7 +164,7 @@ The public commitment in v1.0 was "enforcement in v1.1". v1.1 delivers it inside
 - ~~**FORCE + FIELD runtime composition**~~ — shipped in force-field 2.1.0 (PR #21): a `SessionStart` hook injects the FORCE preset the manifest declares in `runtime_protocol`; advisory, fails open. Not yet verified in a live Claude Code session.
 - **Ledger reference implementations** — shipped in force-field 2.1.0 (PRs #20, #23): `ledger/ledger_ship.py` ships the ledger to dir, S3 or Postgres sinks with HMAC sealing. Tested against moto and local Postgres 16, not live S3; the dir-sink tests run in CI.
 - ~~**Additional FIELD templates**~~ — shipped in force-field 2.1.0 (PR #21): `ssl-fp-builder`, `ssl-fp-reviewer`, `ssl-fp-coordinator`. Further templates only on client request.
-- **Reference runtime enforcement in n8n** — built, unreleased (`plugins/force-field/n8n/`): E1, E3 (+ policy verdicts), E4 and the hash-chained ledger over a webhook; advisory (the caller must enforce), no E2/E5, no shell canonicalisation. See its README.
+- **Reference runtime enforcement in n8n** — shipped in force-field 2.2.0 (`plugins/force-field/n8n/`): E1, E3 (+ policy verdicts), E4 and the hash-chained ledger over a webhook; advisory (the caller must enforce), no E2/E5, no shell canonicalisation. See its README.
 
 ### Conformance Sentinel — estate-level enforcement (general release target: November 2026)
 
