@@ -28,6 +28,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 - Tests: `connector/test/run_connector.sh` (13 cases against a local fake estate), a CI step on the Linux job. Checked by hand in Claude Code 2.1.319: install with `--config`, `/plugin configure --values-stdin`, `claude mcp list` connected in both modes, a wrong key reported as the auth error; the sensitive key was stored in `~/.claude/.credentials.json`, not `settings.json`.
 - Auth scheme: Bearer, confirmed by the principal (2026-11-07). Not run against the live FIELD platform estate (its endpoint path and tool names are not in this repository). The Enforcement Gate is unchanged and still local in both modes.
 
+### Changed (docs: n8n reference enforcement concurrency finding)
+
+- `plugins/force-field/n8n/README.md`: the webhook path was run in a live n8n and passed (auth, verdicts, kill/resume, persistence, ledger verification). Concurrent calls were **not** safe: ledger records and E4 counts were lost and a kill issued during a burst was silently undone, and `N8N_CONCURRENCY_PRODUCTION_LIMIT=1` did not serialise the executions. The README now says so, replacing its earlier advice to run with concurrency 1. Shipped in 2.2.0 with the weaker wording; no code change.
+
 ---
 
 ## force-field — 2.2.0 / marketplace — 2.2.0 — 2026-11-07
