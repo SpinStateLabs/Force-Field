@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin.json",
   "name": "force-field",
   "displayName": "Force-Field Protocol",
-  "version": "2.1.1",
+  "version": "2.2.0",
   "description": "Force-Field Protocol from Spin State Labs, one package: the FORCE runtime prompt protocol (/force), the FIELD governance framework (/field) with its Enforcement Gate hook (kill switch, protected paths, irreversible-action deny patterns, tool-call budget, hash-chained ledger), and a skill explaining how they compose. Replaces the separate force, field and force-field 1.x plugins.",
   "author": {
     "name": "Don Hagell",
