@@ -180,7 +180,8 @@ class Manifest(unittest.TestCase):
         refs = {v[len("${user_config."):-1] for v in mcp["env"].values()}
         self.assertEqual(refs, set(uc))
         self.assertTrue(uc["field_api_key"]["sensitive"])
-        self.assertEqual(uc["estate_mode"]["options"], ["local", "estate"])
+        self.assertNotIn("options", uc["estate_mode"])  # directory policy: allowed values cannot be checked
+        self.assertEqual(uc["estate_mode"]["default"], "local")
         self.assertEqual(uc["estate_mode"]["default"], "local")
 
 

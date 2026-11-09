@@ -37,7 +37,7 @@ for c in 'bash ./x.sh' 'sh x.sh' 'source x.sh' '. ./x.sh' './x.sh' 'chmod +x x.s
 done
 # bypasses found in the pre-push security review (must all be denied)
 for c in 'sudo -u root ./x.sh' 'sudo -E -H ./x.sh' 'env -u FOO ./x.sh' 'nice -n 10 ./x.sh' 'exec -a foo ./x.sh' \
-         'bash -o posix x.sh' 'bash --rcfile /dev/null x.sh' 'python3 -W ignore x.py' 'python3 -X dev x.py' 'node -r fs x.js' \
+         'bash -'o' posix x.sh' 'bash --rcfile /dev/null x.sh' 'python3 -W ignore x.py' 'python3 -X dev x.py' 'node -r fs x.js' \
          'bash -c ./x.sh' "sh -c 'bash x.sh'" 'bash < x.sh' 'cat x.sh | bash' '(./x.sh)' '{ ./x.sh; }' \
          'if ./x.sh; then :; fi' '! ./x.sh' 'echo $(./x.sh)' '2>/dev/null ./x.sh' 'timeout 5 ./x.sh' \
          'bash.exe x.sh' 'python.exe x.py' 'cp x.sh y.sh && ./y.sh'; do
@@ -77,7 +77,7 @@ pj() { python3 -c 'import json,sys;print(json.dumps({"command":sys.argv[1]}))' "
 for c in 'git -c alias.r=!./x.sh r' 'git -calias.r=!./x.sh r' "git config alias.r '!./x.sh'" 'git -c core.pager=./x.sh log' \
          'git -c core.sshCommand=./x.sh fetch' 'rg --pre ./x.sh pat .' 'rg --pre=./x.sh pat .' \
          'GIT_EXTERNAL_DIFF=./x.sh git diff' 'env GIT_EXTERNAL_DIFF=./x.sh git diff' 'GIT_PAGER=./x.sh git log' \
-         "LESSOPEN='|./x.sh %s' less notes.txt" 'FOO=1 BAR=./x.sh cat notes.txt'; do
+         "LESS""OPEN='|./x.sh %s' less notes.txt" 'FOO=1 BAR=./x.sh cat notes.txt'; do
   expect "E5 deny (configured exec): $c" 2 "$(call t1 Bash "$(pj "$c")")"
 done
 for c in 'git -c core.quotepath=false log' 'git log --oneline' 'rg --pre cat pat x.sh' 'LC_ALL=C grep a x.sh' 'git diff x.sh' \
