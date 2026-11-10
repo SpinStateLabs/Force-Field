@@ -7,6 +7,7 @@
 4. The JS ledger verifies under hooks/verify-ledger.py and each record is byte-identical to Python's json.dumps.
 5. The generated workflow is in sync with field-gate-core.js and the Code nodes execute (stubbed n8n globals).
 """
+import hashlib
 import json
 import os
 import pathlib
@@ -158,6 +159,24 @@ with tempfile.TemporaryDirectory() as d:
     report(p.returncode == 0 and "INTACT" in p.stdout, "ledger: JS chain verifies under hooks/verify-ledger.py", p.stdout + p.stderr)
     same = all(json.dumps(json.loads(l), sort_keys=True) == l for l in res["ledger"])
     report(same, "ledger: every record is byte-identical to Python json.dumps(sort_keys=True)")
+    # record provenance (1.6.0): same keys on every decision, a digest of the manifest object, the phase
+    recs = [json.loads(l) for l in res["ledger"]]
+    decided = [r for r in recs if r.get("tool") != "operator"]
+    want = hashlib.sha256(json.dumps(BASE, sort_keys=True).encode()).hexdigest()
+    report(len(decided) == 3 and all(r.get("manifest_json_sha256") == want and r.get("gate_version") == "n8n-1.6.0"
+                                     and r.get("phase") == "pre" for r in decided),
+           "provenance: every decision carries manifest_json_sha256 (canonical JSON), gate_version and phase", decided)
+    report(len({frozenset(r) for r in decided}) == 1 and decided[0]["decision"] == "allow" and decided[0]["rule"] is None
+           and decided[0]["reason"] is None and decided[1]["rule"] == "E3",
+           "provenance: allow and deny records have the same keys; allow has rule and reason null", [sorted(r) for r in decided])
+    report(all("manifest_sha256" not in r for r in recs),
+           "provenance: the n8n digest is not written under the Python gate's field name", recs)
+    other = json.loads(json.dumps(BASE)); other.setdefault("enforcement", {})["protected_paths"] = ["changed"]
+    report(json.loads(js(other, [bash("ls")])["ledger"][0])["manifest_json_sha256"] != want,
+           "provenance: a changed manifest changes the digest")
+    bad = js({"enforcement": {"x": 1.5}}, [bash("ls")])
+    report(bad["decisions"][0]["permissionDecision"] in ("allow", "deny") and "manifest_json_sha256" in json.loads(bad["ledger"][0]),
+           "provenance: a manifest value the digest cannot write gives a null digest, not a crash", bad)
     lines = lp.read_text(encoding="utf-8").splitlines()
     rec = json.loads(lines[1])
     rec["decision"] = "allow"

@@ -18,6 +18,13 @@ const UNGATED = ["Read", "Glob", "Grep", "LS", "NotebookRead", "TodoWrite"];
 const MAX_COMMAND_BYTES = 64 * 1024;
 const ASK_MODES = ["default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"];
 const POLICY_VERDICT = { forbid: "deny", require_human_approval: "ask", allow_with_ledger: "allow" };
+// Record provenance, as the Python gate writes it since 1.6.0. The manifest reaches this core as a JSON object,
+// not as file bytes, so the digest is over its canonical JSON and has its own name: it is NOT comparable with the
+// Python gate's manifest_sha256 (the YAML file's bytes).
+const GATE_VERSION = "n8n-1.6.0";
+function manifestDigest(manifest) {
+  try { return sha256(pyJson(manifest)); } catch (e) { return null; } // a value pyJson cannot write: no digest, no deny
+}
 const LEDGER_MAX = 1000; // records kept in n8n static data; ship them to a real store (see README)
 
 const sha256 = (s) => crypto.createHash("sha256").update(s, "utf8").digest("hex");
@@ -100,10 +107,10 @@ function append(state, event, extra, now) {
 function decide(manifest, input, state, now) {
   state.counts = state.counts || {};
   state.ledger = state.ledger || [];
-  let event = { ts: isoUtc(now), tool: "unknown", store_source: "n8n" };
+  const prov = { manifest_json_sha256: manifestDigest(manifest), gate_version: GATE_VERSION, phase: "pre" };
+  let event = Object.assign({ ts: isoUtc(now), tool: "unknown", store_source: "n8n" }, prov);
   const out = (decision, rule, reason) => {
-    const extra = { decision };
-    if (rule) { extra.rule = rule; extra.reason = reason; }
+    const extra = { decision, rule: rule || null, reason: rule ? reason : null }; // same keys on every decision
     const rec = append(state, event, extra, now);
     return { permissionDecision: decision, rule: rule || null, reason: reason || null, hash: rec.hash };
   };
@@ -116,6 +123,7 @@ function decide(manifest, input, state, now) {
       tool_use_id: (inp && inp.tool_use_id) || null, permission_mode: (inp && inp.permission_mode) || null,
       input_digest: sha256(pyJson(ti)).slice(0, 16), store_source: "n8n",
     };
+    Object.assign(event, prov);
     if (!inp || !tool) return out("deny", "E0", "input is not a tool call (no tool_name); fail-closed");
     if (!manifest || typeof manifest !== "object" || Array.isArray(manifest)) {
       return out("deny", "E0", "manifest missing or not an object; fail-closed");

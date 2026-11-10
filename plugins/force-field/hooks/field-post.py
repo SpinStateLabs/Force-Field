@@ -77,7 +77,7 @@ def find(ledger_path, session, tool_use_id, gate=None, root=None):
     return None
 
 
-def record(ask, session, tool_use_id, mode, source):
+def record(ask, session, tool_use_id, mode, source, prov=None):
     default = mode == "default"
     if default:
         note = ("the call ran after the gate's ask; permission_mode was default, so a prompt was expected, "
@@ -90,7 +90,7 @@ def record(ask, session, tool_use_id, mode, source):
             "permission_mode": mode, "input_digest": ask.get("input_digest"), "store_source": source,
             "decision": "executed", "rule": RULE, "ran": True, "ask_hash": ask.get("hash"),
             "human_approval": "not_evidenced", "approver": None, "mode_is_default": default,
-            "reason": note}
+            "reason": note, "phase": "post", **(prov or {})}  # prov: the gate's provenance() at post time
 
 
 def main():
@@ -117,7 +117,7 @@ def main():
     _lock = gate.gate_lock(root)  # noqa: F841  (held until exit)
     ask = find(ledger_path, session, tool_use_id, gate, root)  # again under the lock: parallel posts append once
     if isinstance(ask, dict):
-        gate.ledger_append(ledger_path, record(ask, session, tool_use_id, mode, source))
+        gate.ledger_append(ledger_path, record(ask, session, tool_use_id, mode, source, gate.provenance()))
 
 
 if __name__ == "__main__":

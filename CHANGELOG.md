@@ -17,6 +17,16 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 
 ## [Unreleased]
 
+### Ledger record provenance (gate 1.6.0; not yet released)
+
+- **Every ledger record now says which rules made the decision.** New fields on every record the gate writes: `manifest_sha256` (sha-256 of the manifest file's bytes as the gate read them; `null` when no manifest could be read), `gate_version`, and `phase` (`pre`: written before the tool ran; the PostToolUse record carries `post`). The manifest is read once, so the digest and the parsed rules come from the same bytes. An edit to the manifest between two calls now shows in the ledger as a change of digest.
+- **One key set for every decision.** Allow records carry `rule` and `reason` as `null`.
+- **Two denies that left no record are now ledgered:** hook input over the size limit, and hook input that is not a JSON object. The record is built from an empty input; nothing of the refused input is written.
+- The n8n reference core writes `manifest_json_sha256` (digest of the manifest as canonical JSON), `gate_version` and `phase`. Its digest is not comparable with the Python gate's `manifest_sha256`, hence the different name.
+- All changes are additive. Records written before 1.6.0 and after it verify in one chain. `phase` is the writer's own statement; the order of records in the chain is the evidence of what came first.
+- Not changed, by decision: no tool input is stored, no signing key is placed on the agent's host, and the gate does not replay past decisions.
+- Credit: the policy digest per record, the phase field and the shared schema follow recommendations from an external reviewer (2026-11-09), checked against the code before adoption. The reviewer will be named here once they agree to it.
+
 ### Known limits (ledger shipper, `ledger/ledger_ship.py`; decision recorded 2026-11-07)
 
 - **The S3 sink has not been run against live AWS S3, by decision.** It was tested only against `moto` (a local mock). What `moto` cannot show, and what stays unverified: that real S3 enforces `IfNoneMatch: *` (an existing record or seal is never overwritten), and behaviour under Object Lock and versioning. Anyone using `s3://` should run `ledger_ship.py ship` and `verify` against a scratch bucket first, and try an overwrite. The Postgres and `dir:` sinks are tested as described in the 2.1.0 entry.
