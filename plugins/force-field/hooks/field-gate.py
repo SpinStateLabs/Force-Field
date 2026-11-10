@@ -60,6 +60,11 @@ Reads field-manifest.yaml (schema field.spinstatelabs.ca/v1) from the project di
                           ledger.store when it is path-like, else .claude/state/field-ledger.jsonl.
                           File-tool records carry `path`: root-relative inside the project,
                           sha256:<hex> outside it (no plaintext absolute paths).
+                          (1.6.0) Every record also carries `manifest_sha256` (sha-256 of the manifest bytes
+                          this decision was made under; null when no manifest could be read), `gate_version`,
+                          and `phase` ("pre": written before the tool ran; field-post.py writes "post"). Allow
+                          records carry `rule` and `reason` as null, so every decision has the same keys. The
+                          phase is the writer's own statement; the order of records in the chain is the evidence.
 
 Exit 0 = allow, or ask (JSON permissionDecision "ask" on stdout: Claude Code shows its permission prompt
 and, with no human to answer, as in `claude -p`, treats the call as denied). Exit 2 = deny (stderr line + JSON
@@ -88,6 +93,7 @@ and any literal `cd` in the same command (not a directory held in a variable: cd
 import datetime
 import fnmatch
 import hashlib
+import io
 import json
 import math
 import os
@@ -100,6 +106,11 @@ import sys
 import time
 
 MANIFEST_NAME = "field-manifest.yaml"
+# Ledger record provenance (1.6.0). GATE_VERSION is this gate's own version, written to every record (it is not the
+# plugin release number). _MANIFEST_SHA is the sha-256 of the manifest bytes load_manifest last parsed in this
+# process: None when there is no manifest or it could not be read.
+GATE_VERSION = "1.6.0"
+_MANIFEST_SHA = None
 STATE_DIR = ".claude/state"
 DEFAULT_KILL = STATE_DIR + "/KILL"
 DEFAULT_LEDGER = STATE_DIR + "/field-ledger.jsonl"
@@ -162,20 +173,38 @@ def manifest_path(root):
 
 
 def load_manifest(path):
-    """None = no manifest (project is not FIELD-governed). {'_unparsed': why} = fail-closed."""
+    """None = no manifest (project is not FIELD-governed). {'_unparsed': why} = fail-closed.
+    Sets _MANIFEST_SHA to the sha-256 of the bytes read (1.6.0). The file is read once: the digest and the parse see
+    the same bytes, so a manifest swapped between two reads cannot be recorded under the other's digest."""
+    global _MANIFEST_SHA
+    _MANIFEST_SHA = None
     if not path.exists():
         return None
+    raw = read_error = None
+    try:
+        raw = path.read_bytes()
+        _MANIFEST_SHA = hashlib.sha256(raw).hexdigest()
+    except Exception as exc:  # reported below as a parse error, after the PyYAML check, as before 1.6.0
+        read_error = exc
     try:
         import yaml
     except ImportError:
         return {"_unparsed": "PyYAML missing (pip install pyyaml)"}
     try:
-        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        if read_error is not None:
+            raise read_error
+        # Decoded as path.read_text(encoding="utf-8") decoded it: strict UTF-8, universal newlines.
+        data = yaml.safe_load(io.TextIOWrapper(io.BytesIO(raw), encoding="utf-8").read())
     except Exception as exc:  # yaml.YAMLError, decode errors
         return {"_unparsed": f"manifest parse error ({exc.__class__.__name__})"}
     if not isinstance(data, dict):
         return {"_unparsed": "manifest is not a mapping"}
     return data
+
+
+def provenance():
+    """What made this decision: the manifest digest and the gate version. No path, no content."""
+    return {"manifest_sha256": _MANIFEST_SHA, "gate_version": GATE_VERSION}
 
 
 def is_pathlike(value):
@@ -1796,7 +1825,7 @@ def make_event(inp, root, store_source):
              "tool_use_id": inp.get("tool_use_id"),
              "permission_mode": inp.get("permission_mode"),
              "input_digest": hashlib.sha256(json.dumps(ti, sort_keys=True).encode()).hexdigest()[:16],
-             "store_source": store_source}
+             "store_source": store_source, **provenance(), "phase": "pre"}
     if tool in FILE_TOOLS:
         event["path"] = path_key(ti.get("file_path") or ti.get("notebook_path") or "", root)
     return event
@@ -1809,7 +1838,10 @@ def early_deny(inp, root, manifest, rule, reason):
     try:
         event = make_event(inp, root, store_source)
     except Exception:  # a malformed tool_input must not turn the deny into an allow
-        event = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), "tool": "unknown"}
+        event = {"ts": datetime.datetime.now(datetime.timezone.utc).isoformat(), "tool": "unknown",
+                 **provenance(), "phase": "pre"}
+    if not event.get("tool"):
+        event["tool"] = "unknown"  # hook input that was not read (oversize, not JSON) names no tool
     try:
         _lock = gate_lock(root)  # noqa: F841  (held until exit)
     except Exception:
@@ -2206,7 +2238,7 @@ def enforce(inp, manifest, root, ledger_path, store_source):
     if e3_pending:  # allow_with_ledger
         ledger_append(ledger_path, {**event, "decision": "allow", "rule": "E3-allowed", "reason": e3_pending[1]})
         sys.exit(0)
-    ledger_append(ledger_path, {**event, "decision": "allow"})
+    ledger_append(ledger_path, {**event, "decision": "allow", "rule": None, "reason": None})
     sys.exit(0)
 
 
@@ -2240,10 +2272,12 @@ def main():
             sys.exit(0)  # no manifest and no FIELD state: not a FIELD-governed project, do nothing
         early_deny(inp, root, manifest, "E0",
                    f"field-manifest is missing or unreadable but this project is governed ({why}); fail-closed")
+    # (1.6.0) These two denies are ledgered too. The record is built from an empty input, never from the input
+    # that was refused: nothing of an oversize or malformed input reaches the ledger.
     if oversize:
-        emit_deny("E0", f"hook input exceeds {MAX_INPUT_BYTES} bytes; fail-closed")
+        early_deny({}, root, manifest, "E0", f"hook input exceeds {MAX_INPUT_BYTES} bytes; fail-closed")
     if bad_input:
-        emit_deny("E0", "hook input is not a JSON object; fail-closed")
+        early_deny({}, root, manifest, "E0", "hook input is not a JSON object; fail-closed")
     ledger_path, store_source = resolve_store(manifest, root)
     try:
         _lock = gate_lock(root)  # noqa: F841  (held until exit)
