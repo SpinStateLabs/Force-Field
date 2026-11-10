@@ -45,5 +45,10 @@
       "sensitive": true,
       "required": false
     }
-  }
+  },
+  "icon": "./.claude-plugin/icon.png",
+  "documentationUrl": "https://github.com/SpinStateLabs/Force-Field#readme",
+  "supportUrl": "https://github.com/SpinStateLabs/Force-Field/issues",
+  "privacyPolicyUrl": "https://github.com/SpinStateLabs/Force-Field/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/SpinStateLabs/Force-Field/blob/main/TERMS.md"
 }
