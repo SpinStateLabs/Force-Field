@@ -4,6 +4,15 @@ All notable changes to plugins in this marketplace are documented here.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+
+---
+
+## force — 2.3.0 / marketplace — 2.3.0 — 2026-11-07
+
+### Changed
+
+- **Lock-step versioning.** `force` moves from 1.0.2 to 2.3.0 to match `force-field` 2.3.0 and the marketplace. No content change: the FORCE skill, `/force` command and protocol text are identical to 1.0.2.
+
 ---
 
 ## [Unreleased]

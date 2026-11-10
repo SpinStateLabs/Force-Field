@@ -13,7 +13,7 @@
       "name": "force",
       "source": "./plugins/force",
       "description": "FORCE runtime prompt protocol. Toggle Forbid-flattery / Oppose-premise / Reference-sources / Chain-of-thought / Express-uncertainty constraints via the /force slash command. FORCE only: no governance hooks.",
-      "version": "1.0.2",
+      "version": "2.3.0",
       "category": "ai-hygiene",
       "tags": [
         "force",
