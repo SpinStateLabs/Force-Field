@@ -27,11 +27,7 @@
     "estate_mode": {
       "type": "string",
       "title": "FIELD mode",
-      "description": "local: FIELD runs on this machine only (Enforcement Gate hook and local ledger); no network calls. estate: connect to an existing estate created by the FIELD platform through its MCP server.",
-      "options": [
-        "local",
-        "estate"
-      ],
+      "description": "Enter local or estate. local: FIELD runs on this machine only (Enforcement Gate hook and local ledger); no network calls. estate: connect to an existing estate created by the FIELD platform through its MCP server.",
       "default": "local",
       "required": true
     },
@@ -49,5 +45,10 @@
       "sensitive": true,
       "required": false
     }
-  }
+  },
+  "icon": "./.claude-plugin/icon.png",
+  "documentationUrl": "https://github.com/SpinStateLabs/Force-Field#readme",
+  "supportUrl": "https://github.com/SpinStateLabs/Force-Field/issues",
+  "privacyPolicyUrl": "https://github.com/SpinStateLabs/Force-Field/blob/main/PRIVACY.md",
+  "termsOfServiceUrl": "https://github.com/SpinStateLabs/Force-Field/blob/main/TERMS.md"
 }
