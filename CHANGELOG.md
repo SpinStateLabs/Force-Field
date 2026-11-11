@@ -30,6 +30,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) · Adherence to
 - FORCE v1.1 refinements based on real-world usage feedback.
 - FIELD refinements: manifest examples per pillar, reference architectures.
 
+### CI
+
+- **`hooks/test/run_bypass.sh` now runs in the Ubuntu `gate-tests` job.** The 1.5.2 entry below says the suite "Runs in the `gate-tests` CI job", but `validate.yml` had no step for it and no commit on `main` ever added one: it ran only in the Windows job, through `run_all.sh`. The step is added; no test and no gate change. Measured 2026-11-11 on Linux (WSL2 Ubuntu, bash 5.3.9, Python 3.14.4) against the 2.3.0 gate: 193 PASS, 0 FAIL, exit 0.
+
 ---
 
 ## force-field — 2.3.0 / marketplace — 2.3.0 — 2026-11-07
