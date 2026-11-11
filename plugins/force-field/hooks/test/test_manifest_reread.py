@@ -6,14 +6,19 @@ change to the manifest takes effect on the next gated call. A cache kept between
 would let a ledger record describe rules that were no longer the ones on disk.
 
   1. A cache has to key on something. Between calls this test rewrites the manifest IN PLACE: the same file, the
-     same byte length, the modification time put back to the nanosecond. A cache keyed on the file's identity,
-     size or time would answer from the old manifest. Two independent parts of the manifest change (an E3 deny
-     pattern and an E2 protected path); then the manifest is made unparsable (E0) and restored. Every decision
-     must follow the bytes on disk.
+     same byte length, the modification time put back to the nanosecond. A cache that trusts the file's identity,
+     size or modification time would answer from the old manifest. The modification time is first set an hour
+     back, as in a real project: a cache that distrusts a just-written file (a racy-timestamp guard) would
+     otherwise re-read on every call of a test this short. Two independent parts of the manifest change (an E3
+     deny pattern and an E2 protected path); then the manifest is made unparsable (E0) and restored. Every
+     decision must follow the bytes on disk.
   2. The check itself: the same calls must go wrong against a mutant gate whose load_manifest answers from a
-     file keyed on size and modification time. A check that passes the mutant is a FAIL.
+     file keyed on size and modification time, with that guard. A check that passes the mutant is a FAIL.
 
-Read-only tools (UNGATED in field-gate.py) never reach the manifest and are not part of this test.
+What this does not pin: other manifest-derived state on its own (the ledger path, the kill switch, the E4 and E5
+settings), the launcher field-gate.sh (the calls start field-gate.py directly), and the post hook, which also
+calls load_manifest. Read-only tools (UNGATED in field-gate.py) never reach the manifest and are not part of
+this test. A cache that re-validates by content has to read the file, and passes, as it should.
 State goes in a temporary directory, the governed registry included; nothing is written under ~/.claude.
 """
 import json
@@ -22,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 GATE = os.path.join(HERE, "..", "field-gate.py")
@@ -64,14 +70,24 @@ def call(gate, proj, env, tool, tool_input, n):
            "hook_event_name": "PreToolUse", "permission_mode": "default", "tool_use_id": "toolu_%d" % n}
     r = subprocess.run([sys.executable, gate], input=json.dumps(inp).encode("utf-8"), stdout=subprocess.PIPE,
                        stderr=subprocess.PIPE, env=env, cwd=proj, timeout=120)
-    if r.returncode == 0:
+    # The verdict is the decision JSON on stdout plus the exit code, both: an allow is exit 0 with no deny or ask
+    # decision; a deny is exit 2 with "deny" and a reason that starts with its rule tag. Anything else is the gate
+    # not running (a wrong path, a crash) or an output shape this test does not know, and is never read as allow.
+    decision = reason = ""
+    out = r.stdout.decode("utf-8", "replace").strip()
+    if out:
+        try:
+            hook = json.loads(out.splitlines()[-1]).get("hookSpecificOutput") or {}
+            decision = str(hook.get("permissionDecision", ""))
+            reason = str(hook.get("permissionDecisionReason", ""))
+        except (ValueError, AttributeError):
+            decision = "unparsed"
+    if r.returncode == 0 and decision in ("", "allow"):
         return "allow"
+    if r.returncode == 2 and decision == "deny" and reason[:1] == "[" and reason[1:3] in RULES and reason[3:4] == "]":
+        return "deny " + reason[1:3]
     text = (r.stdout + r.stderr).decode("utf-8", "replace")
-    for rule in RULES:
-        if "[%s]" % rule in text:
-            return "deny " + rule
-    # a deny always names its rule: anything else is the gate not running (a wrong path, a crash)
-    return "no verdict (exit %d: %s)" % (r.returncode, " ".join(text.split())[-160:])
+    return "no verdict (exit %d, decision %r: %s)" % (r.returncode, decision, " ".join(text.split())[-160:])
 
 
 def swap(path, content):
@@ -101,6 +117,10 @@ def sequence(gate, work, name, a, b, g, extra_env=None):
     mf = os.path.join(proj, "field-manifest.yaml")
     with open(mf, "wb") as fh:
         fh.write(a)
+    # An old modification time, as in a real project (every swap below puts this same value back). A cache that
+    # distrusts a just-written file would otherwise re-read on every call here and hide behind the test's speed.
+    old = time.time_ns() - 3600 * 10 ** 9
+    os.utime(mf, ns=(old, old))
     bash = ("Bash", {"command": "echo REREADB"})
     edit = ("Edit", {"file_path": os.path.join(proj, "reread-b.txt"), "old_string": "a", "new_string": "b"})
     plan = [
@@ -124,6 +144,8 @@ def sequence(gate, work, name, a, b, g, extra_env=None):
 MAIN_MARK = '\nif __name__ == "__main__":\n'
 MUTANT = '''
 # ---- MUTANT (test_manifest_reread.py): load_manifest answers from a file keyed on size and mtime ----
+# It trusts its copy only when the manifest was last modified more than ten seconds ago (a racy-timestamp
+# guard), which is the harder cache to catch: the test must give the manifest an old modification time.
 _real_load_manifest = load_manifest
 
 
@@ -131,13 +153,14 @@ def load_manifest(path):
     try:
         st = path.stat()
         key = [st.st_size, st.st_mtime_ns]
+        settled = time.time_ns() - st.st_mtime_ns > 10 * 10 ** 9
     except OSError:
-        key = None
+        key, settled = None, False
     cache = os.environ["REREAD_MUTANT_CACHE"]
     try:
         with open(cache, encoding="utf-8") as fh:
             saved = json.load(fh)
-        if saved["key"] == key:
+        if settled and saved["key"] == key:
             return saved["manifest"]
     except (OSError, ValueError, KeyError):
         pass
@@ -183,7 +206,7 @@ def main():
 
         # 2. the check itself: a gate that caches the manifest by size and mtime must be caught
         mutant = build_mutant(work)
-        report(mutant is not None, "mutant gate built (load_manifest wrapped with a size and mtime cache)",
+        report(mutant is not None, "mutant gate built (load_manifest wrapped with a size and mtime cache that distrusts a fresh file)",
                "field-gate.py no longer has exactly one __main__ block: update MAIN_MARK")
         if mutant is not None:
             m_results, m_kept = sequence(mutant, work, "mutant", a, b, g,
