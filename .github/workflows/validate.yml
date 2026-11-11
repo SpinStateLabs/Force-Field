@@ -171,6 +171,8 @@ jobs:
         run: bash plugins/force-field/hooks/test/run_compose.sh
       - name: Ledger shipper tests (dir sink; S3 and Postgres run where their dependencies exist)
         run: bash plugins/force-field/hooks/test/run_ledger_ship.sh
+      - name: Manifest re-read tests (a manifest change takes effect on the next gated call; a caching mutant must be caught)
+        run: bash plugins/force-field/hooks/test/run_manifest_reread.sh
       - name: n8n reference enforcement tests (decisions, differential vs the gate, ledger parity, workflow sync)
         run: bash plugins/force-field/n8n/test/run_n8n.sh
       - name: Estate Connector tests (local mode, estate proxy, auth errors, manifest wiring)
